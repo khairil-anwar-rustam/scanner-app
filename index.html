@@ -199,40 +199,59 @@ function applyCrop(){
   img.src = pages[current].img;
 
   img.onload = () => {
-    let c = document.createElement('canvas');
-    let ctx = c.getContext('2d');
 
-    c.width = 1200;
-    c.height = 1600;
+    let canvas = document.createElement("canvas");
+    let ctx = canvas.getContext("2d");
 
-    // source corners (user dragged)
-    let src = corners.map(p => ({x:p.x, y:p.y}));
+    canvas.width = 1200;
+    canvas.height = 1600;
 
-    // destination A4 rectangle
-    let dst = [
-      {x:0,y:0},
-      {x:c.width,y:0},
-      {x:c.width,y:c.height},
-      {x:0,y:c.height}
-    ];
+    // get current corners (IMPORTANT)
+    let [p1,p2,p3,p4] = corners;
 
-    // simple bilinear warp approximation
-    function warpQuad(ctx,img,s,d){
-      ctx.save();
-      ctx.setTransform(1,0,0,1,0,0);
+    let src = [p1,p2,p3,p4];
 
-      ctx.drawImage(img,0,0,c.width,c.height);
-      ctx.restore();
-    }
+    // draw image first
+    ctx.drawImage(img,0,0,canvas.width,canvas.height);
 
-    // simplified (canvas-only version)
-    ctx.drawImage(img,0,0,c.width,c.height);
+    // SIMPLE FIX (WORKING LOGIC)
+    // We simulate crop by mapping bounding box of corners
 
-    pages[current].img = c.toDataURL("image/jpeg",1.0);
+    let minX = Math.min(p1.x,p2.x,p3.x,p4.x);
+    let maxX = Math.max(p1.x,p2.x,p3.x,p4.x);
+    let minY = Math.min(p1.y,p2.y,p3.y,p4.y);
+    let maxY = Math.max(p1.y,p2.y,p3.y,p4.y);
+
+    let w = maxX - minX;
+    let h = maxY - minY;
+
+    let temp = document.createElement("canvas");
+    let tctx = temp.getContext("2d");
+
+    temp.width = w;
+    temp.height = h;
+
+    tctx.drawImage(
+      img,
+      minX, minY, w, h,
+      0, 0, w, h
+    );
+
+    // convert to A4
+    let final = document.createElement("canvas");
+    let fctx = final.getContext("2d");
+
+    final.width = 1200;
+    final.height = 1600;
+
+    fctx.drawImage(temp,0,0,final.width,final.height);
+
+    pages[current].img = final.toDataURL("image/jpeg",1.0);
+
     show();
     render();
   };
-}
+  }
 
 // export A4 PDF (no stretch)
 function exportPDF(){
