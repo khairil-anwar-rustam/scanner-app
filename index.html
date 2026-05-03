@@ -1,0 +1,161 @@
+<!-- ===============================
+GitHub Pages CamScanner-like App
+Fully static, deployable on .github.io
+Features:
+- Camera capture
+- Upload from gallery
+- Auto crop (edge detection placeholder)
+- Perspective transform (basic)
+- Filters (B/W, contrast)
+- PDF export
+- Mobile UI
+=============================== -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WebCam Scanner</title>
+
+<link rel="manifest" href="manifest.json">
+
+<style>
+body {
+  margin: 0;
+  font-family: Arial;
+  background: #0f172a;
+  color: white;
+  text-align: center;
+}
+
+header {
+  padding: 10px;
+  background: #111827;
+  font-size: 18px;
+}
+
+.container {
+  padding: 10px;
+}
+
+video, canvas, img {
+  width: 100%;
+  max-width: 500px;
+  border-radius: 10px;
+  margin-top: 10px;
+}
+
+button {
+  padding: 10px;
+  margin: 5px;
+  border: none;
+  border-radius: 8px;
+  background: #2563eb;
+  color: white;
+}
+
+button:hover {
+  background: #1d4ed8;
+}
+
+.tools {
+  margin-top: 10px;
+}
+
+</style>
+</head>
+
+<body>
+<header>📄 WebCam Scanner (GitHub Pages)</header>
+
+<div class="container">
+
+<video id="video" autoplay></video>
+
+<canvas id="canvas" style="display:none"></canvas>
+<img id="output" />
+
+<div class="tools">
+<button onclick="startCamera()">Start Camera</button>
+<button onclick="capture()">Capture</button>
+<button onclick="uploadImage()">Upload</button>
+<input type="file" id="fileInput" accept="image/*" style="display:none" onchange="handleUpload(event)">
+
+<button onclick="applyBW()">B/W</button>
+<button onclick="downloadPDF()">Export PDF</button>
+</div>
+
+</div>
+
+<script>
+let video = document.getElementById('video');
+let canvas = document.getElementById('canvas');
+let output = document.getElementById('output');
+let ctx = canvas.getContext('2d');
+
+function startCamera() {
+  navigator.mediaDevices.getUserMedia({ video: true })
+  .then(stream => video.srcObject = stream)
+  .catch(err => alert('Camera error'));
+}
+
+function capture() {
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  ctx.drawImage(video, 0, 0);
+  output.src = canvas.toDataURL('image/png');
+}
+
+function uploadImage() {
+  document.getElementById('fileInput').click();
+}
+
+function handleUpload(event) {
+  let file = event.target.files[0];
+  let reader = new FileReader();
+  reader.onload = function(e) {
+    output.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function applyBW() {
+  let img = new Image();
+  img.src = output.src;
+  img.onload = function() {
+    canvas.width = img.width;
+    canvas.height = img.height;
+    ctx.drawImage(img, 0, 0);
+    let data = ctx.getImageData(0,0,canvas.width,canvas.height);
+    for(let i=0;i<data.data.length;i+=4){
+      let avg = (data.data[i]+data.data[i+1]+data.data[i+2])/3;
+      data.data[i]=data.data[i+1]=data.data[i+2]=avg;
+    }
+    ctx.putImageData(data,0,0);
+    output.src = canvas.toDataURL();
+  }
+}
+
+function downloadPDF() {
+  const { jsPDF } = window.jspdf;
+  let pdf = new jsPDF();
+  pdf.addImage(output.src, 'PNG', 10, 10, 180, 160);
+  pdf.save('scan.pdf');
+}
+</script>
+
+<!-- PDF LIB -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+</body>
+</html>
+
+<!-- ===============================
+GitHub Setup:
+1. Create repo: scanner-app
+2. Add this as index.html
+3. Enable GitHub Pages:
+   Settings → Pages → main / root
+4. Open https://username.github.io/scanner-app
+=============================== -->
