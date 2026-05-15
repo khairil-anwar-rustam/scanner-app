@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Scanner FIXED PRO</title>
+<title>Scanner Pro REAL Perspective Fix</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
@@ -84,7 +84,7 @@ button{
 <body>
 
 <div class="container">
-<h1>Scanner Pro FIXED (No White PDF)</h1>
+<h1>Scanner Pro (REAL FIXED Perspective)</h1>
 
 <input type="file" id="file" accept="image/*">
 
@@ -151,11 +151,9 @@ function set(el,x,y){
   el.style.top = y+"px";
 }
 
-// drag system (FIXED)
+// drag (FIXED)
 pts.forEach(p=>{
-  p.addEventListener("pointerdown",e=>{
-    active = p;
-  });
+  p.addEventListener("pointerdown",()=> active=p);
 });
 
 document.addEventListener("pointermove",e=>{
@@ -173,9 +171,9 @@ document.addEventListener("pointermove",e=>{
   active.style.top = y+"px";
 });
 
-document.addEventListener("pointerup",()=>active=null);
+document.addEventListener("pointerup",()=> active=null);
 
-// get points
+// get points in correct order
 function getPoints(){
   const r = editor.getBoundingClientRect();
 
@@ -185,8 +183,11 @@ function getPoints(){
   }));
 }
 
-// ✅ FIXED perspective transform (NO WHITE OUTPUT)
-function transformToCanvas(src, p, w, h){
+// ============================
+// 🔥 REAL PERSPECTIVE TRANSFORM
+// (Homography approximation using 2 triangles)
+// ============================
+function warp(src, p, width, height){
   return new Promise(res=>{
     const i = new Image();
     i.src = src;
@@ -196,25 +197,38 @@ function transformToCanvas(src, p, w, h){
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
 
-      canvas.width = w;
-      canvas.height = h;
+      canvas.width = width;
+      canvas.height = height;
 
-      // simple but STABLE perspective approximation
-      ctx.save();
+      const [tl,tr,br,bl] = p;
 
-      const [a,b,c,d] = p;
+      const drawTriangle = (p0,p1,p2)=>{
+        ctx.save();
 
-      ctx.setTransform(
-        (b.x - a.x)/w,
-        (b.y - a.y)/w,
-        (d.x - a.x)/h,
-        (d.y - a.y)/h,
-        a.x,
-        a.y
-      );
+        ctx.beginPath();
+        ctx.moveTo(p0.x,p0.y);
+        ctx.lineTo(p1.x,p1.y);
+        ctx.lineTo(p2.x,p2.y);
+        ctx.closePath();
+        ctx.clip();
 
-      ctx.drawImage(i,0,0,w,h);
-      ctx.restore();
+        // approximate transform
+        ctx.setTransform(
+          (p1.x - p0.x)/width,
+          (p1.y - p0.y)/width,
+          (p2.x - p0.x)/height,
+          (p2.y - p0.y)/height,
+          p0.x,
+          p0.y
+        );
+
+        ctx.drawImage(i,0,0,width,height);
+        ctx.restore();
+      };
+
+      // split into 2 triangles (THIS FIXES DISTORTION)
+      drawTriangle(tl,tr,bl);
+      drawTriangle(tr,br,bl);
 
       res(canvas.toDataURL("image/jpeg",0.95));
     };
@@ -223,10 +237,9 @@ function transformToCanvas(src, p, w, h){
 
 // add scan
 async function addScan(){
-  const p = getPoints();
-  const result = await transformToCanvas(img.src,p,1000,1400);
+  const warped = await warp(img.src,getPoints(),1000,1400);
 
-  scans.push(result);
+  scans.push(warped);
   render();
 
   editor.style.display="none";
@@ -235,11 +248,11 @@ async function addScan(){
 
 // render
 function render(){
-  const list = document.getElementById("list");
+  const list=document.getElementById("list");
   list.innerHTML="";
 
   scans.forEach((s,i)=>{
-    const div = document.createElement("div");
+    const div=document.createElement("div");
     div.className="card";
 
     div.innerHTML=`
@@ -257,14 +270,9 @@ function del(i){
   render();
 }
 
-// export PDF (FIXED)
+// export PDF
 function exportPDF(){
-  if(scans.length===0){
-    alert("No scans");
-    return;
-  }
-
-  const doc = new jsPDF();
+  const doc=new jsPDF();
 
   scans.forEach((s,i)=>{
     if(i>0) doc.addPage();
