@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pro Scanner Ultra (Fixed Perspective)</title>
+<title>Pro Scanner Ultra FIXED+</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
@@ -35,11 +35,9 @@ body{
   width:100%;
   height:100%;
   object-fit:contain;
-  user-select:none;
   pointer-events:none;
 }
 
-/* corner points */
 .corner{
   width:22px;
   height:22px;
@@ -65,7 +63,7 @@ button{
 <body>
 
 <div class="app">
-  <h2>Pro Scanner Ultra (Perspective FIX)</h2>
+  <h2>Scanner Ultra Pro FIXED</h2>
 
   <input type="file" id="fileInput" accept="image/*">
 
@@ -97,21 +95,13 @@ const corners = {
 let active = null;
 let imgLoaded = false;
 
-// init default positions
+// default corners
 function resetCorners(){
-  corners.tl.style.left = "10%";
-  corners.tl.style.top = "10%";
-
-  corners.tr.style.left = "90%";
-  corners.tr.style.top = "10%";
-
-  corners.bl.style.left = "10%";
-  corners.bl.style.top = "90%";
-
-  corners.br.style.left = "90%";
-  corners.br.style.top = "90%";
+  corners.tl.style.left="10%"; corners.tl.style.top="10%";
+  corners.tr.style.left="90%"; corners.tr.style.top="10%";
+  corners.bl.style.left="10%"; corners.bl.style.top="90%";
+  corners.br.style.left="90%"; corners.br.style.top="90%";
 }
-
 resetCorners();
 
 // upload
@@ -140,102 +130,174 @@ document.addEventListener("pointermove", e=>{
   let x = (e.clientX - rect.left) / rect.width * 100;
   let y = (e.clientY - rect.top) / rect.height * 100;
 
-  x = Math.max(0, Math.min(100, x));
-  y = Math.max(0, Math.min(100, y));
+  x = Math.max(0,Math.min(100,x));
+  y = Math.max(0,Math.min(100,y));
 
-  corners[active].style.left = x + "%";
-  corners[active].style.top = y + "%";
+  corners[active].style.left = x+"%";
+  corners[active].style.top = y+"%";
 });
 
 document.addEventListener("pointerup", ()=> active=null);
 
-// ====== REAL PERSPECTIVE TRANSFORM ======
+// ---------- REAL HOMOGRAPHY ----------
 
-function getPos(el, rect, imgW, imgH){
+function getPoint(el, rect, w, h){
   const r = el.getBoundingClientRect();
   return {
-    x: (r.left - rect.left) / rect.width * imgW,
-    y: (r.top - rect.top) / rect.height * imgH
+    x: (r.left - rect.left) / rect.width * w,
+    y: (r.top - rect.top) / rect.height * h
   };
 }
 
-// bilinear transform (core CamScanner logic)
-function warpImage(ctx, img, src, dst, w, h){
-  const tmp = document.createElement("canvas");
-  tmp.width = w;
-  tmp.height = h;
-  const tctx = tmp.getContext("2d");
+// solve homography (DLT)
+function computeH(src, dst){
+  const m = [];
 
-  tctx.drawImage(img, 0, 0, w, h);
-  const srcData = tctx.getImageData(0,0,w,h);
+  for(let i=0;i<4;i++){
+    const x = src[i].x, y = src[i].y;
+    const X = dst[i].x, Y = dst[i].y;
 
-  const out = ctx.createImageData(w,h);
+    m.push([-x,-y,-1,0,0,0,x*X,y*X,X]);
+    m.push([0,0,0,-x,-y,-1,x*Y,y*Y,Y]);
+  }
 
-  function lerp(a,b,t){ return a + (b-a)*t; }
+  const A = mathSolve(m);
+  return [
+    A[0],A[1],A[2],
+    A[3],A[4],A[5],
+    A[6],A[7],1
+  ];
+}
 
-  // simple approximation warp (fast + mobile friendly)
+// gaussian elimination (simple solver)
+function mathSolve(mat){
+  let m = mat.map(r=>r.slice());
+
+  for(let i=0;i<8;i++){
+    let maxRow=i;
+    for(let j=i+1;j<8;j++){
+      if(Math.abs(m[j][i])>Math.abs(m[maxRow][i])) maxRow=j;
+    }
+    [m[i],m[maxRow]]=[m[maxRow],m[i]];
+
+    let div=m[i][i];
+    for(let k=i;k<9;k++) m[i][k]/=div;
+
+    for(let j=0;j<8;j++){
+      if(j===i) continue;
+      let factor=m[j][i];
+      for(let k=i;k<9;k++){
+        m[j][k]-=factor*m[i][k];
+      }
+    }
+  }
+
+  return m.map(r=>r[8]);
+}
+
+// warp pixel
+function warp(img, H, w, h){
+  const canvas=document.createElement("canvas");
+  canvas.width=w;
+  canvas.height=h;
+  const ctx=canvas.getContext("2d");
+
+  const src=document.createElement("canvas");
+  src.width=img.width;
+  src.height=img.height;
+  const sctx=src.getContext("2d");
+  sctx.drawImage(img,0,0);
+
+  const sdata=sctx.getImageData(0,0,src.width,src.height);
+  const out=ctx.createImageData(w,h);
+
+  const hInv=invertH(H);
+
   for(let y=0;y<h;y++){
     for(let x=0;x<w;x++){
 
-      const u = x / w;
-      const v = y / h;
+      const sx = (hInv[0]*x + hInv[1]*y + hInv[2]) /
+                 (hInv[6]*x + hInv[7]*y + 1);
 
-      // interpolate quadrilateral
-      const topX = lerp(dst.tl.x, dst.tr.x, u);
-      const topY = lerp(dst.tl.y, dst.tr.y, u);
+      const sy = (hInv[3]*x + hInv[4]*y + hInv[5]) /
+                 (hInv[6]*x + hInv[7]*y + 1);
 
-      const botX = lerp(dst.bl.x, dst.br.x, u);
-      const botY = lerp(dst.bl.y, dst.br.y, u);
+      const ix=Math.floor(sx);
+      const iy=Math.floor(sy);
 
-      const srcX = lerp(topX, botX, v);
-      const srcY = lerp(topY, botY, v);
+      const i=(iy*src.width+ix)*4;
+      const o=(y*w+x)*4;
 
-      const sx = Math.floor(srcX);
-      const sy = Math.floor(srcY);
-
-      const i = (sy*w + sx) * 4;
-      const o = (y*w + x) * 4;
-
-      out.data[o] = srcData.data[i] || 0;
-      out.data[o+1] = srcData.data[i+1] || 0;
-      out.data[o+2] = srcData.data[i+2] || 0;
-      out.data[o+3] = 255;
+      out.data[o]=sdata.data[i]||0;
+      out.data[o+1]=sdata.data[i+1]||0;
+      out.data[o+2]=sdata.data[i+2]||0;
+      out.data[o+3]=255;
     }
   }
 
   ctx.putImageData(out,0,0);
+  return canvas;
 }
 
-// export
+// invert 3x3 homography
+function invertH(m){
+  const [
+    a,b,c,
+    d,e,f,
+    g,h,i
+  ]=m;
+
+  const A=e*i-f*h;
+  const B=d*i-f*g;
+  const C=d*h-e*g;
+  const D=b*i-c*h;
+  const E=a*i-c*g;
+  const F=a*h-b*g;
+  const G=b*f-c*e;
+  const H=a*f-c*d;
+  const I=a*e-b*d;
+
+  const det=a*A-b*B+c*C;
+
+  return [
+    A/det, D/-det, G/det,
+    B/-det, E/det, H/-det,
+    C/det, F/-det
+  ];
+}
+
+// export PDF
 async function exportPDF(){
   if(!imgLoaded) return alert("Upload image first");
 
-  const image = new Image();
-  image.src = img.src;
+  const image=new Image();
+  image.src=img.src;
   await new Promise(r=>image.onload=r);
 
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
+  const rect=editor.getBoundingClientRect();
 
-  canvas.width = 1000;
-  canvas.height = 1400;
+  const src=[
+    getPoint(corners.tl,rect,image.width,image.height),
+    getPoint(corners.tr,rect,image.width,image.height),
+    getPoint(corners.br,rect,image.width,image.height),
+    getPoint(corners.bl,rect,image.width,image.height)
+  ];
 
-  const rect = editor.getBoundingClientRect();
+  const dst=[
+    {x:0,y:0},
+    {x:1000,y:0},
+    {x:1000,y:1400},
+    {x:0,y:1400}
+  ];
 
-  const tl = getPos(corners.tl, rect, image.width, image.height);
-  const tr = getPos(corners.tr, rect, image.width, image.height);
-  const bl = getPos(corners.bl, rect, image.width, image.height);
-  const br = getPos(corners.br, rect, image.width, image.height);
+  const H=computeH(src,dst);
+  const canvas=warp(image,H,1000,1400);
 
-  warpImage(ctx, image, image, {tl,tr,bl,br}, canvas.width, canvas.height);
-
-  const pdf = new jsPDF("p","mm","a4");
-  const imgData = canvas.toDataURL("image/jpeg", 1.0);
-
-  pdf.addImage(imgData, "JPEG", 10, 10, 190, 270);
+  const pdf=new jsPDF("p","mm","a4");
+  pdf.addImage(canvas.toDataURL("image/jpeg",1.0),"JPEG",10,10,190,270);
   pdf.save("scan.pdf");
 }
 </script>
 
 </body>
-</html>
+  </html>
