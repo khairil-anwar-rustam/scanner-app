@@ -2,259 +2,198 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Scanner Pro</title>
-
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pro Scanner Crop</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
-  *{
-  box-sizing:border-box;
-  -webkit-tap-highlight-color:transparent;
-}
-
-body{
+ body{
   margin:0;
   font-family:Arial;
-  background:#0f172a;
+  background:#0b1220;
   color:white;
-}
-
-header{
-  padding:16px;
   text-align:center;
-  font-size:22px;
-  font-weight:bold;
-  background:#111827;
-  position:sticky;
-  top:0;
 }
 
-.container{
+.app{
+  padding:15px;
   max-width:900px;
   margin:auto;
-  padding:15px;
 }
 
-.card{
-  background:#1e293b;
-  padding:14px;
-  border-radius:16px;
-  margin-bottom:15px;
-}
-
-input,select,button{
-  width:100%;
-  padding:12px;
-  margin-top:10px;
-  border:none;
-  border-radius:10px;
-  font-size:16px;
-}
-
-input,select{
-  background:#0f172a;
-  color:white;
-}
-
-button{
-  background:#22c55e;
-  font-weight:bold;
-  color:black;
-}
-
-button:active{
-  transform:scale(0.98);
-}
-
-.danger{
-  background:#ef4444;
-  color:white;
-}
-
-#editor{
+.editor{
+  position:relative;
   margin-top:15px;
-  background:black;
-  height:55vh;
-  display:flex;
-  align-items:center;
-  justify-content:center;
+  height:65vh;
+  background:#000;
   overflow:hidden;
   border-radius:12px;
 }
 
-#previewImage{
+#image{
   width:100%;
   height:100%;
   object-fit:contain;
 }
 
-.receipt-list{
+/* crop corners */
+.corner{
+  width:18px;
+  height:18px;
+  background:#22c55e;
+  border:2px solid #fff;
+  border-radius:50%;
+  position:absolute;
+  touch-action:none;
+}
+
+.tl{ left:10%; top:10%; }
+.tr{ right:10%; top:10%; }
+.bl{ left:10%; bottom:10%; }
+.br{ right:10%; bottom:10%; }
+
+button{
   margin-top:15px;
-}
-
-.item{
-  background:#111827;
-  padding:10px;
-  border-radius:12px;
-  margin-bottom:10px;
-}
-
-.item img{
   width:100%;
+  padding:12px;
+  border:none;
   border-radius:10px;
-}
-
-.total{
-  text-align:right;
-  font-size:18px;
+  background:#22c55e;
   font-weight:bold;
-  margin:10px 0;
 }
-
-.row{
-  display:flex;
-  gap:10px;
-  }
 </style>
-  
 </head>
 
 <body>
 
-<header>Scanner Pro</header>
+<div class="app">
+  <h2>Pro Scanner Crop Tool</h2>
 
-<div class="container">
+  <input type="file" id="fileInput" accept="image/*">
 
-<div class="card">
+  <div class="editor" id="editor">
+    <img id="image" />
+    
+    <!-- crop corners -->
+    <div class="corner tl" id="tl"></div>
+    <div class="corner tr" id="tr"></div>
+    <div class="corner bl" id="bl"></div>
+    <div class="corner br" id="br"></div>
+  </div>
 
-<input type="date" id="date">
-<input type="text" id="purpose" placeholder="Document Name">
-
-<select id="filterMode">
-  <option value="original">Original</option>
-  <option value="bw">Black & White</option>
-  <option value="gray">Grayscale</option>
-  <option value="enhance">Enhanced</option>
-</select>
-
-<input type="file" id="fileInput" accept="image/*" capture="environment">
-
-<div id="editor">
-  <img id="previewImage">
+  <button onclick="exportPDF()">Export PDF</button>
 </div>
-
-<div class="row">
-<button onclick="saveScan()">Save Scan</button>
-<button class="danger" onclick="resetEditor()">Reset</button>
-</div>
-
-</div>
-
-<div class="total" id="totalAmount">Scans: 0</div>
-
-<div class="receipt-list" id="receiptList"></div>
-
-<button onclick="generatePDF()">Export PDF</button>
-
-</div>
-
-<canvas id="canvas"></canvas>
 
 <script>
-  const { jsPDF } = window.jspdf;
+ const { jsPDF } = window.jspdf;
 
-const fileInput = document.getElementById("fileInput");
-const previewImage = document.getElementById("previewImage");
+const img = document.getElementById("image");
+const editor = document.getElementById("editor");
 
-let scans = [];
-let currentImage = null;
+const corners = {
+  tl: document.getElementById("tl"),
+  tr: document.getElementById("tr"),
+  bl: document.getElementById("bl"),
+  br: document.getElementById("br")
+};
 
-fileInput.addEventListener("change", (e) => {
+let activeCorner = null;
+let imgLoaded = false;
+
+// upload image
+document.getElementById("fileInput").addEventListener("change", e => {
   const file = e.target.files[0];
-  if (!file) return;
+  if(!file) return;
 
   const reader = new FileReader();
-
-  reader.onload = (ev) => {
-    currentImage = ev.target.result;
-    previewImage.src = currentImage;
+  reader.onload = ev => {
+    img.src = ev.target.result;
+    imgLoaded = true;
   };
-
   reader.readAsDataURL(file);
 });
 
-function saveScan() {
-  const name = document.getElementById("purpose").value;
+// drag corners
+Object.keys(corners).forEach(key => {
+  const el = corners[key];
 
-  if (!currentImage) {
-    alert("Select image first");
-    return;
-  }
-
-  if (!name) {
-    alert("Enter document name");
-    return;
-  }
-
-  scans.push({
-    name,
-    image: currentImage
+  el.addEventListener("pointerdown", () => {
+    activeCorner = key;
   });
+});
 
-  render();
-}
+document.addEventListener("pointermove", (e) => {
+  if(!activeCorner || !imgLoaded) return;
 
-function render() {
-  const list = document.getElementById("receiptList");
-  list.innerHTML = "";
+  const rect = editor.getBoundingClientRect();
 
-  scans.forEach((s, i) => {
-    const div = document.createElement("div");
-    div.className = "item";
+  let x = ((e.clientX - rect.left) / rect.width) * 100;
+  let y = ((e.clientY - rect.top) / rect.height) * 100;
 
-    div.innerHTML = `
-      <b>${s.name}</b>
-      <img src="${s.image}">
-      <button class="danger" onclick="deleteScan(${i})">Delete</button>
-    `;
+  x = Math.max(0, Math.min(100, x));
+  y = Math.max(0, Math.min(100, y));
 
-    list.appendChild(div);
-  });
+  const el = corners[activeCorner];
+  el.style.left = x + "%";
+  el.style.top = y + "%";
+});
 
-  document.getElementById("totalAmount").innerText =
-    "Scans: " + scans.length;
-}
+document.addEventListener("pointerup", () => {
+  activeCorner = null;
+});
 
-function deleteScan(i) {
-  scans.splice(i, 1);
-  render();
-}
+// export PDF with crop
+async function exportPDF(){
+  if(!imgLoaded) return alert("Upload image first");
 
-function resetEditor() {
-  fileInput.value = "";
-  previewImage.src = "";
-  currentImage = null;
-}
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
 
-async function generatePDF() {
-  if (scans.length === 0) {
-    alert("No scans");
-    return;
+  const image = new Image();
+  image.src = img.src;
+
+  await new Promise(r => image.onload = r);
+
+  canvas.width = image.width;
+  canvas.height = image.height;
+
+  // get points
+  const rect = editor.getBoundingClientRect();
+
+  function getPoint(el){
+    const r = el.getBoundingClientRect();
+    return {
+      x: (r.left - rect.left) / rect.width * image.width,
+      y: (r.top - rect.top) / rect.height * image.height
+    };
   }
 
-  const doc = new jsPDF();
+  const tl = getPoint(corners.tl);
+  const tr = getPoint(corners.tr);
+  const bl = getPoint(corners.bl);
+  const br = getPoint(corners.br);
 
-  for (let i = 0; i < scans.length; i++) {
-    if (i !== 0) doc.addPage();
+  // simple clip crop (triangle method approximation)
+  ctx.save();
 
-    doc.text(scans[i].name, 10, 10);
-    doc.addImage(scans[i].image, "JPEG", 10, 20, 180, 160);
-  }
+  ctx.beginPath();
+  ctx.moveTo(tl.x, tl.y);
+  ctx.lineTo(tr.x, tr.y);
+  ctx.lineTo(br.x, br.y);
+  ctx.lineTo(bl.x, bl.y);
+  ctx.closePath();
+  ctx.clip();
 
-  doc.save("scans.pdf");
-  }
+  ctx.drawImage(image, 0, 0);
+
+  ctx.restore();
+
+  const pdf = new jsPDF();
+  const imgData = canvas.toDataURL("image/jpeg", 0.95);
+
+  pdf.addImage(imgData, "JPEG", 10, 10, 190, 250);
+  pdf.save("scanned.pdf");
+ }
 </script>
-
 </body>
-  </html>
+</html>
