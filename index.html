@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pro Scanner - Perspective Crop</title>
+<title>Pro Scanner FIXED 4-Corner</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
@@ -41,26 +41,27 @@ button{
 
 .editor{
   position:relative;
-  margin-top:10px;
   background:#111827;
   border-radius:10px;
   overflow:hidden;
+  touch-action:none;
 }
 
 #img{
   width:100%;
   display:block;
+  pointer-events:none;
 }
 
 .point{
-  width:16px;
-  height:16px;
+  width:18px;
+  height:18px;
   background:#00ff99;
   border-radius:50%;
   position:absolute;
   transform:translate(-50%,-50%);
   cursor:pointer;
-  border:2px solid #000;
+  border:2px solid black;
 }
 
 .list .card{
@@ -73,7 +74,6 @@ button{
 .card img{
   width:100%;
   border-radius:8px;
-  margin-top:8px;
 }
 
 .delete{
@@ -86,7 +86,7 @@ button{
 <body>
 
 <div class="container">
-<h1>Scanner Pro (4-Corner Perspective)</h1>
+<h1>Scanner Pro FIXED (Drag Working)</h1>
 
 <input type="file" id="file" accept="image/*">
 
@@ -113,7 +113,7 @@ let img = new Image();
 let scans = [];
 
 const editor = document.getElementById('editor');
-const imageEl = document.getElementById('img');
+const imgEl = document.getElementById('img');
 
 const points = [
   document.getElementById('p1'),
@@ -122,9 +122,9 @@ const points = [
   document.getElementById('p4')
 ];
 
-let dragging = null;
+let activePoint = null;
 
-// load image
+// 📌 Load image
 document.getElementById('file').addEventListener('change', e=>{
   const file = e.target.files[0];
   if(!file) return;
@@ -132,125 +132,138 @@ document.getElementById('file').addEventListener('change', e=>{
   const reader = new FileReader();
   reader.onload = ev=>{
     img.src = ev.target.result;
-    imageEl.src = ev.target.result;
+    imgEl.src = ev.target.result;
     editor.style.display = 'block';
   };
   reader.readAsDataURL(file);
 });
 
-// init points after image load
+// 📌 Init points AFTER image load
 img.onload = ()=>{
   const rect = editor.getBoundingClientRect();
 
-  points[0].style.left = "50px";
-  points[0].style.top = "50px";
-
-  points[1].style.left = (rect.width-50) + "px";
-  points[1].style.top = "50px";
-
-  points[2].style.left = (rect.width-50) + "px";
-  points[2].style.top = (rect.height-50) + "px";
-
-  points[3].style.left = "50px";
-  points[3].style.top = (rect.height-50) + "px";
+  setPoint(points[0], 40, 40);
+  setPoint(points[1], rect.width-40, 40);
+  setPoint(points[2], rect.width-40, rect.height-40);
+  setPoint(points[3], 40, rect.height-40);
 };
 
-// drag points
+function setPoint(el,x,y){
+  el.style.left = x + "px";
+  el.style.top = y + "px";
+}
+
+// ============================
+// 🔥 FIXED DRAG SYSTEM
+// ============================
+
+// pointer down (mouse + touch)
 points.forEach(p=>{
-  p.addEventListener('mousedown', ()=> dragging = p);
+  p.addEventListener("pointerdown",(e)=>{
+    activePoint = p;
+    e.preventDefault();
+  });
 });
 
-document.addEventListener('mousemove', e=>{
-  if(!dragging) return;
+// move anywhere
+document.addEventListener("pointermove",(e)=>{
+  if(!activePoint) return;
 
   const rect = editor.getBoundingClientRect();
 
-  dragging.style.left = (e.clientX - rect.left) + "px";
-  dragging.style.top = (e.clientY - rect.top) + "px";
+  let x = e.clientX - rect.left;
+  let y = e.clientY - rect.top;
+
+  // clamp inside editor
+  x = Math.max(0, Math.min(rect.width, x));
+  y = Math.max(0, Math.min(rect.height, y));
+
+  activePoint.style.left = x + "px";
+  activePoint.style.top = y + "px";
 });
 
-document.addEventListener('mouseup', ()=> dragging=null);
+// release
+document.addEventListener("pointerup",()=>{
+  activePoint = null;
+});
 
-// perspective transform (simple approximation using canvas sampling)
-function warpImage(src, pts, width, height){
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
+// ============================
+// Perspective Warp (simple but stable)
+// ============================
+function warp(src, pts, w, h){
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
 
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = w;
+  canvas.height = h;
 
-  const temp = new Image();
-  temp.src = src;
+  const imgObj = new Image();
+  imgObj.src = src;
 
-  return new Promise(resolve=>{
-    temp.onload = ()=>{
-
-      // brute-force grid warp (simple CamScanner-like approximation)
-      const divisions = 200;
+  return new Promise(res=>{
+    imgObj.onload = ()=>{
 
       const [p1,p2,p3,p4] = pts;
+      const steps = 120;
 
-      for(let i=0;i<divisions;i++){
-        for(let j=0;j<divisions;j++){
+      for(let i=0;i<steps;i++){
+        for(let j=0;j<steps;j++){
 
-          const u = i/divisions;
-          const v = j/divisions;
+          const u = i/steps;
+          const v = j/steps;
 
-          // bilinear interpolation (fake perspective warp)
-          const xTop = p1.x + (p2.x - p1.x)*u;
-          const yTop = p1.y + (p2.y - p1.y)*u;
+          const topX = p1.x + (p2.x - p1.x)*u;
+          const topY = p1.y + (p2.y - p1.y)*u;
 
-          const xBottom = p4.x + (p3.x - p4.x)*u;
-          const yBottom = p4.y + (p3.y - p4.y)*u;
+          const botX = p4.x + (p3.x - p4.x)*u;
+          const botY = p4.y + (p3.y - p4.y)*u;
 
-          const x = xTop + (xBottom - xTop)*v;
-          const y = yTop + (yBottom - yTop)*v;
+          const x = topX + (botX - topX)*v;
+          const y = topY + (botY - topY)*v;
 
-          const sx = (x / editor.clientWidth) * temp.width;
-          const sy = (y / editor.clientHeight) * temp.height;
+          const sx = (x/editor.clientWidth) * imgObj.width;
+          const sy = (y/editor.clientHeight) * imgObj.height;
 
-          const dx = u * width;
-          const dy = v * height;
+          const dx = u*w;
+          const dy = v*h;
 
-          ctx.drawImage(temp, sx, sy, 2, 2, dx, dy, 2, 2);
+          ctx.drawImage(imgObj, sx, sy, 2, 2, dx, dy, 2, 2);
         }
       }
 
-      resolve(canvas.toDataURL("image/jpeg",0.95));
+      res(canvas.toDataURL("image/jpeg",0.95));
     };
   });
 }
 
 // get points
 function getPoints(){
-  return points.map(p=>{
-    const rect = editor.getBoundingClientRect();
-    return {
-      x: parseFloat(p.style.left) / rect.width * editor.clientWidth,
-      y: parseFloat(p.style.top) / rect.height * editor.clientHeight
-    };
-  });
+  const rect = editor.getBoundingClientRect();
+
+  return points.map(p=>({
+    x: parseFloat(p.style.left)/rect.width * editor.clientWidth,
+    y: parseFloat(p.style.top)/rect.height * editor.clientHeight
+  }));
 }
 
 // add scan
 async function addScan(){
-  const warped = await warpImage(img.src, getPoints(), 1000, 1400);
-
+  const warped = await warp(img.src, getPoints(), 1000, 1400);
   scans.push(warped);
   render();
 
-  editor.style.display = 'none';
-  document.getElementById('file').value = '';
+  editor.style.display = "none";
+  document.getElementById("file").value = "";
 }
 
 // render
 function render(){
-  const list = document.getElementById('list');
-  list.innerHTML = '';
+  const list = document.getElementById("list");
+  list.innerHTML = "";
 
   scans.forEach((s,i)=>{
-    const div = document.createElement('div');
-    div.className = 'card';
+    const div = document.createElement("div");
+    div.className = "card";
 
     div.innerHTML = `
       <div>Page ${i+1}</div>
@@ -274,7 +287,7 @@ function exportPDF(){
 
   scans.forEach((s,i)=>{
     if(i!==0) doc.addPage();
-    doc.addImage(s,'JPEG',10,10,190,260);
+    doc.addImage(s,"JPEG",10,10,190,260);
   });
 
   doc.save("scan.pdf");
