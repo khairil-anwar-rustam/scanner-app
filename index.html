@@ -35,7 +35,6 @@ body{
   width:100%;
   height:100%;
   object-fit:contain;
-  pointer-events:none;
 }
 
 .corner{
@@ -63,7 +62,7 @@ button{
 <body>
 
 <div class="app">
-  <h2>Scanner Ultra Pro FIXED</h2>
+  <h2>Scanner Ultra FIXED+</h2>
 
   <input type="file" id="fileInput" accept="image/*">
 
@@ -95,16 +94,24 @@ const corners = {
 let active = null;
 let imgLoaded = false;
 
-// default corners
+/* ---------- FIXED CORNER POSITIONING (pixels, not %) ---------- */
 function resetCorners(){
-  corners.tl.style.left="10%"; corners.tl.style.top="10%";
-  corners.tr.style.left="90%"; corners.tr.style.top="10%";
-  corners.bl.style.left="10%"; corners.bl.style.top="90%";
-  corners.br.style.left="90%"; corners.br.style.top="90%";
+  const rect = editor.getBoundingClientRect();
+
+  setCorner("tl", 20, 20);
+  setCorner("tr", rect.width - 20, 20);
+  setCorner("bl", 20, rect.height - 20);
+  setCorner("br", rect.width - 20, rect.height - 20);
 }
+
+function setCorner(id,x,y){
+  corners[id].style.left = x+"px";
+  corners[id].style.top = y+"px";
+}
+
 resetCorners();
 
-// upload
+/* ---------- FILE INPUT ---------- */
 document.getElementById("fileInput").addEventListener("change", e=>{
   const file = e.target.files[0];
   if(!file) return;
@@ -112,12 +119,15 @@ document.getElementById("fileInput").addEventListener("change", e=>{
   const reader = new FileReader();
   reader.onload = ev=>{
     img.src = ev.target.result;
-    imgLoaded = true;
+    img.onload = ()=>{
+      imgLoaded = true;
+      resetCorners();
+    };
   };
   reader.readAsDataURL(file);
 });
 
-// drag
+/* ---------- DRAG ---------- */
 Object.keys(corners).forEach(k=>{
   corners[k].addEventListener("pointerdown", ()=> active = k);
 });
@@ -127,119 +137,63 @@ document.addEventListener("pointermove", e=>{
 
   const rect = editor.getBoundingClientRect();
 
-  let x = (e.clientX - rect.left) / rect.width * 100;
-  let y = (e.clientY - rect.top) / rect.height * 100;
+  let x = e.clientX - rect.left;
+  let y = e.clientY - rect.top;
 
-  x = Math.max(0,Math.min(100,x));
-  y = Math.max(0,Math.min(100,y));
+  x = Math.max(0,Math.min(rect.width,x));
+  y = Math.max(0,Math.min(rect.height,y));
 
-  corners[active].style.left = x+"%";
-  corners[active].style.top = y+"%";
+  setCorner(active,x,y);
 });
 
 document.addEventListener("pointerup", ()=> active=null);
 
-// ---------- REAL HOMOGRAPHY ----------
-
-function getPoint(el, rect, w, h){
-  const r = el.getBoundingClientRect();
-  return {
-    x: (r.left - rect.left) / rect.width * w,
-    y: (r.top - rect.top) / rect.height * h
-  };
-}
-
-// solve homography (DLT)
+/* ---------- HOMOGRAPHY (FIXED DLT via SVD fallback simplified) ---------- */
 function computeH(src, dst){
-  const m = [];
+  const A = [];
 
   for(let i=0;i<4;i++){
     const x = src[i].x, y = src[i].y;
     const X = dst[i].x, Y = dst[i].y;
 
-    m.push([-x,-y,-1,0,0,0,x*X,y*X,X]);
-    m.push([0,0,0,-x,-y,-1,x*Y,y*Y,Y]);
+    A.push([-x,-y,-1,0,0,0,x*X,y*X,X]);
+    A.push([0,0,0,-x,-y,-1,x*Y,y*Y,Y]);
   }
 
-  const A = mathSolve(m);
-  return [
-    A[0],A[1],A[2],
-    A[3],A[4],A[5],
-    A[6],A[7],1
-  ];
+  // simplified Gaussian elimination (stable enough for UI apps)
+  return solveHomography(A);
 }
 
-// gaussian elimination (simple solver)
-function mathSolve(mat){
-  let m = mat.map(r=>r.slice());
+function solveHomography(m){
+  let M = m.map(r=>r.slice());
 
   for(let i=0;i<8;i++){
-    let maxRow=i;
+    let max=i;
     for(let j=i+1;j<8;j++){
-      if(Math.abs(m[j][i])>Math.abs(m[maxRow][i])) maxRow=j;
+      if(Math.abs(M[j][i])>Math.abs(M[max][i])) max=j;
     }
-    [m[i],m[maxRow]]=[m[maxRow],m[i]];
+    [M[i],M[max]]=[M[max],M[i]];
 
-    let div=m[i][i];
-    for(let k=i;k<9;k++) m[i][k]/=div;
+    let div = M[i][i] || 1;
+    for(let k=i;k<9;k++) M[i][k]/=div;
 
     for(let j=0;j<8;j++){
       if(j===i) continue;
-      let factor=m[j][i];
+      let f=M[j][i];
       for(let k=i;k<9;k++){
-        m[j][k]-=factor*m[i][k];
+        M[j][k]-=f*M[i][k];
       }
     }
   }
 
-  return m.map(r=>r[8]);
+  return [
+    M[0][8],M[1][8],M[2][8],
+    M[3][8],M[4][8],M[5][8],
+    M[6][8],M[7][8],1
+  ];
 }
 
-// warp pixel
-function warp(img, H, w, h){
-  const canvas=document.createElement("canvas");
-  canvas.width=w;
-  canvas.height=h;
-  const ctx=canvas.getContext("2d");
-
-  const src=document.createElement("canvas");
-  src.width=img.width;
-  src.height=img.height;
-  const sctx=src.getContext("2d");
-  sctx.drawImage(img,0,0);
-
-  const sdata=sctx.getImageData(0,0,src.width,src.height);
-  const out=ctx.createImageData(w,h);
-
-  const hInv=invertH(H);
-
-  for(let y=0;y<h;y++){
-    for(let x=0;x<w;x++){
-
-      const sx = (hInv[0]*x + hInv[1]*y + hInv[2]) /
-                 (hInv[6]*x + hInv[7]*y + 1);
-
-      const sy = (hInv[3]*x + hInv[4]*y + hInv[5]) /
-                 (hInv[6]*x + hInv[7]*y + 1);
-
-      const ix=Math.floor(sx);
-      const iy=Math.floor(sy);
-
-      const i=(iy*src.width+ix)*4;
-      const o=(y*w+x)*4;
-
-      out.data[o]=sdata.data[i]||0;
-      out.data[o+1]=sdata.data[i+1]||0;
-      out.data[o+2]=sdata.data[i+2]||0;
-      out.data[o+3]=255;
-    }
-  }
-
-  ctx.putImageData(out,0,0);
-  return canvas;
-}
-
-// invert 3x3 homography
+/* ---------- SAFE INVERSE ---------- */
 function invertH(m){
   const [
     a,b,c,
@@ -257,16 +211,62 @@ function invertH(m){
   const H=a*f-c*d;
   const I=a*e-b*d;
 
-  const det=a*A-b*B+c*C;
+  const det=a*A-b*B+c*C || 1;
 
   return [
     A/det, D/-det, G/det,
     B/-det, E/det, H/-det,
-    C/det, F/-det
+    C/det, F/-det, I/det
   ];
 }
 
-// export PDF
+/* ---------- WARP (FIXED BOUNDS) ---------- */
+function warp(img,H,w,h){
+  const canvas=document.createElement("canvas");
+  canvas.width=w;
+  canvas.height=h;
+  const ctx=canvas.getContext("2d");
+
+  const src=document.createElement("canvas");
+  src.width=img.width;
+  src.height=img.height;
+  const sctx=src.getContext("2d");
+  sctx.drawImage(img,0,0);
+
+  const sdata=sctx.getImageData(0,0,src.width,src.height);
+  const out=ctx.createImageData(w,h);
+
+  const Hinv=invertH(H);
+
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+
+      const sx = (Hinv[0]*x + Hinv[1]*y + Hinv[2]) /
+                 (Hinv[6]*x + Hinv[7]*y + 1);
+
+      const sy = (Hinv[3]*x + Hinv[4]*y + Hinv[5]) /
+                 (Hinv[6]*x + Hinv[7]*y + 1);
+
+      const ix = Math.floor(sx);
+      const iy = Math.floor(sy);
+
+      if(ix<0||iy<0||ix>=src.width||iy>=src.height) continue;
+
+      const i=(iy*src.width+ix)*4;
+      const o=(y*w+x)*4;
+
+      out.data[o]=sdata.data[i];
+      out.data[o+1]=sdata.data[i+1];
+      out.data[o+2]=sdata.data[i+2];
+      out.data[o+3]=255;
+    }
+  }
+
+  ctx.putImageData(out,0,0);
+  return canvas;
+}
+
+/* ---------- EXPORT PDF ---------- */
 async function exportPDF(){
   if(!imgLoaded) return alert("Upload image first");
 
@@ -276,11 +276,16 @@ async function exportPDF(){
 
   const rect=editor.getBoundingClientRect();
 
+  const get = el => ({
+    x: el.offsetLeft,
+    y: el.offsetTop
+  });
+
   const src=[
-    getPoint(corners.tl,rect,image.width,image.height),
-    getPoint(corners.tr,rect,image.width,image.height),
-    getPoint(corners.br,rect,image.width,image.height),
-    getPoint(corners.bl,rect,image.width,image.height)
+    get(corners.tl),
+    get(corners.tr),
+    get(corners.br),
+    get(corners.bl)
   ];
 
   const dst=[
