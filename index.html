@@ -55,6 +55,7 @@ let img=document.getElementById('img');
 let editor=document.getElementById('editor');
 let file=document.getElementById('file');
 let mode='color'; // color | gray | bw
+let tempCroppedImage = null;
 
 let corners=[
 {x:40,y:60,id:'c1'},
@@ -294,9 +295,10 @@ warp(src[0],src[2],src[3],dst[0],dst[2],dst[3]);
 
 applyMode(canvas);
 
-pages[current]=canvas.toDataURL('image/jpeg',1);
-show();
-render();
+tempCroppedImage = canvas.toDataURL('image/jpeg',1);
+
+document.getElementById('previewImg').src = tempCroppedImage;
+document.getElementById('previewBox').style.display = 'flex';
 };
 }
 
@@ -379,7 +381,43 @@ if(i<pages.length-1)pdf.addPage();
 pdf.save('scan.pdf');
 }
 
+function confirmCrop(){
+pages[current] = tempCroppedImage;
+
+document.getElementById('previewBox').style.display = 'none';
+
+show();
+render();
+  }
+
+function cancelCrop(){
+tempCroppedImage = null;
+
+document.getElementById('previewBox').style.display = 'none';
+}
+
 </script>
+
+<div id="previewBox" style="
+position:fixed;
+top:0;left:0;right:0;bottom:0;
+background:rgba(0,0,0,0.85);
+display:none;
+align-items:center;
+justify-content:center;
+flex-direction:column;
+z-index:9999;
+">
+
+<img id="previewImg" style="max-width:90%;max-height:70%;border-radius:10px;">
+
+<div style="margin-top:10px;display:flex;gap:10px;">
+<button onclick="confirmCrop()">Confirm</button>
+<button onclick="cancelCrop()" class="secondary">Cancel</button>
+</div>
+
+</div>
+
 </body>
   </html>
   
