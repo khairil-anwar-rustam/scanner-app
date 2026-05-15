@@ -245,6 +245,7 @@ tri(p[0].x,p[0].y,p[1].x,p[1].y,p[2].x,p[2].y,0,0,1200,0,1200,1600);
 tri(p[0].x,p[0].y,p[2].x,p[2].y,p[3].x,p[3].y,0,0,1200,1600,0,1600);
 
 applyMode(canvas);
+flattenEnhance(canvas);
 
 pages[current]=canvas.toDataURL('image/jpeg',1);
 show();render();
@@ -294,6 +295,88 @@ if(i<pages.length-1) pdf.addPage();
 
 pdf.save('scan.pdf');
 }
+
+// ================================
+// CAMSCANNER OVERLAY (ADDITIVE)
+// ================================
+
+let overlay = document.createElement('div');
+overlay.style.position = "absolute";
+overlay.style.left = "0";
+overlay.style.top = "0";
+overlay.style.right = "0";
+overlay.style.bottom = "0";
+overlay.style.pointerEvents = "none";
+overlay.style.zIndex = "5";
+
+// grid lines
+overlay.innerHTML = `
+<svg width="100%" height="100%">
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(34,197,94,0.15)" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#grid)" />
+</svg>
+`;
+
+editor.appendChild(overlay);
+
+// ================================
+// FLATTEN / DOC ENHANCE (ADDITIVE)
+// ================================
+
+function flattenEnhance(canvas){
+  let ctx = canvas.getContext('2d');
+  let imgData = ctx.getImageData(0,0,canvas.width,canvas.height);
+  let d = imgData.data;
+
+  let avgAngleFix = 0;
+
+  // contrast + edge punch (document scan feel)
+  for(let i=0;i<d.length;i+=4){
+    let r=d[i], g=d[i+1], b=d[i+2];
+
+    // luminance
+    let v = 0.3*r + 0.59*g + 0.11*b;
+
+    // boost contrast slightly
+    v = (v - 128) * 1.35 + 128;
+
+    d[i]=d[i+1]=d[i+2]=v;
+  }
+
+  ctx.putImageData(imgData,0,0);
+
+  // subtle sharpening kernel
+  let img = ctx.getImageData(0,0,canvas.width,canvas.height);
+  let s = img.data;
+
+  let copy = new Uint8ClampedArray(s);
+
+  let w = canvas.width;
+
+  for(let i=1;i<canvas.height-1;i++){
+    for(let j=1;j<canvas.width-1;j++){
+      let idx = (i*w + j)*4;
+
+      for(let k=0;k<3;k++){
+        let val =
+          copy[idx + k]*5
+          - copy[idx - 4 + k]
+          - copy[idx + 4 + k]
+          - copy[idx - w*4 + k]
+          - copy[idx + w*4 + k];
+
+        s[idx+k] = Math.min(255, Math.max(0, val/1));
+      }
+    }
+  }
+
+  ctx.putImageData(img,0,0);
+  }
+
 </script>
 
 </body>
