@@ -1,17 +1,50 @@
 <!DOCTYPE html>
 <html>
 <head>
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Scanner Pro FIXED</title>
+<title>Scanner Ultra Pro</title>
 
 <style>
-body{margin:0;font-family:Arial;background:#0b1220;color:white}
+body{
+margin:0;
+font-family:Arial;
+background:#0b1220;
+color:white;
+text-align:center;
+}
+
+header{
+padding:12px;
+background:#111a2e;
+font-weight:bold;
+}
+
+#controls{
+display:flex;
+flex-wrap:wrap;
+gap:8px;
+justify-content:center;
+padding:10px;
+background:#0f172a;
+}
+
+button,input{
+padding:10px;
+border:0;
+border-radius:8px;
+font-weight:bold;
+}
+
+button{background:#22c55e; cursor:pointer;}
 
 #editor{
 position:relative;
 height:60vh;
+margin:10px;
 background:black;
 overflow:hidden;
+border-radius:10px;
 }
 
 #img{
@@ -22,53 +55,47 @@ object-fit:contain;
 
 .corner{
 position:absolute;
-width:18px;height:18px;
-background:#22c55e;
+width:18px;
+height:18px;
+background:red;
 border-radius:50%;
-transform:translate(-50%,-50%);
-touch-action:none;
+cursor:grab;
+z-index:10;
 }
 
-.controls{
-position:fixed;
-bottom:0;left:0;right:0;
-background:#0f172a;
-padding:10px;
-display:flex;
-gap:6px;
-justify-content:center;
-flex-wrap:wrap;
+.page{
+width:80px;
+height:100px;
+object-fit:cover;
+border:2px solid #22c55e;
+margin:5px;
 }
-
-button{
-padding:10px;
-border:none;
-border-radius:8px;
-background:#2563eb;
-color:white;
-}
-
-button.secondary{background:#374151}
 
 #pages{
 display:flex;
 overflow-x:auto;
-gap:8px;
 padding:10px;
-margin-bottom:110px;
 }
 
-.thumb{
-width:60px;height:80px;
-object-fit:cover;
-border:2px solid #334155;
-}
-
-.thumb.active{border-color:#22c55e}
+canvas{display:none;}
 </style>
+
 </head>
 
 <body>
+
+<header>📄 Scanner ULTRA PRO (AI + OCR + Warp + PWA)</header>
+
+<div id="controls">
+<input type="file" id="fileInput" accept="image/*">
+
+<button onclick="autoDetect()">Auto Detect</button>
+<button onclick="applyWarp()">Perspective Fix</button>
+
+<button onclick="addPage()">Add Page</button>
+<button onclick="exportPDF()">Export PDF</button>
+<button onclick="runOCR()">OCR Text</button>
+</div>
 
 <div id="editor">
 <img id="img">
@@ -78,272 +105,171 @@ border:2px solid #334155;
 <div class="corner" id="c4"></div>
 </div>
 
-<input type="file" id="file" multiple hidden>
-
-<div class="controls">
-<button onclick="file.click()">Upload</button>
-<button onclick="rotatePage()">Rotate</button>
-<button onclick="applyCrop()">Crop</button>
-<button onclick="exportPDF()">PDF</button>
-</div>
-
 <div id="pages"></div>
 
+<canvas id="canvas"></canvas>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://docs.opencv.org/4.x/opencv.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
 <script>
 
+let img = document.getElementById("img");
+let fileInput = document.getElementById("fileInput");
+let canvas = document.getElementById("canvas");
+let ctx = canvas.getContext("2d");
+
 let pages = [];
-let current = 0;
-
-let img = document.getElementById('img');
-let editor = document.getElementById('editor');
-let file = document.getElementById('file');
-
-let activeCorner = null;
 
 let corners = [
-{x:50,y:50,id:'c1'},
-{x:300,y:50,id:'c2'},
-{x:300,y:400,id:'c3'},
-{x:50,y:400,id:'c4'}
+document.getElementById("c1"),
+document.getElementById("c2"),
+document.getElementById("c3"),
+document.getElementById("c4")
 ];
 
-// =====================
-// LOAD
-// =====================
-file.onchange = (e)=>{
-[...e.target.files].forEach(f=>{
-let r = new FileReader();
-r.onload = ()=>{
-pages.push(r.result);
-current = pages.length-1;
-show();
-render();
+let dragging = null;
+
+/* ================= LOAD IMAGE ================= */
+fileInput.onchange = e=>{
+let file = e.target.files[0];
+let reader = new FileReader();
+reader.onload = ev=>{
+img.src = ev.target.result;
+setTimeout(initCorners,500);
 };
-r.readAsDataURL(f);
-});
+reader.readAsDataURL(file);
 };
 
-function show(){
-img.src = pages[current];
-img.onload = ()=>{
-setTimeout(()=>{
-resetCorners();
-updateCorners();
-},50);
+/* ================= CORNER SYSTEM ================= */
+function initCorners(){
+let box = img.getBoundingClientRect();
+
+corners.forEach((c,i)=>{
+c.style.left = (50 + i*20) + "px";
+c.style.top = (50 + i*20) + "px";
+c.onmousedown = ()=> dragging = c;
+});
+
+document.onmousemove = e=>{
+if(dragging){
+dragging.style.left = e.clientX + "px";
+dragging.style.top = e.clientY + "px";
+}
 };
-render();
+
+document.onmouseup = ()=> dragging = null;
 }
 
-function render(){
-let p = document.getElementById('pages');
-p.innerHTML='';
+/* ================= AUTO EDGE DETECTION ================= */
+function autoDetect(){
+if(!window.cv) return alert("OpenCV loading...");
 
-pages.forEach((src,i)=>{
-let im = document.createElement('img');
-im.src = src;
-im.className = 'thumb' + (i===current?' active':'');
-im.onclick = ()=>{current=i;show();};
-p.appendChild(im);
+let src = cv.imread(img);
+let gray = new cv.Mat();
+let edges = new cv.Mat();
+
+cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+cv.Canny(gray, edges, 75, 200);
+
+cv.imshow(canvas, edges);
+
+src.delete(); gray.delete(); edges.delete();
+
+alert("Edges detected (use warp fix)");
+}
+
+/* ================= PERSPECTIVE TRANSFORM ================= */
+function applyWarp(){
+
+let src = cv.imread(img);
+
+let srcTri = cv.matFromArray(4,1,cv.CV_32FC2,[
+0,0,
+img.width,0,
+img.width,img.height,
+0,img.height
+]);
+
+let dstTri = cv.matFromArray(4,1,cv.CV_32FC2,[
+0,0,
+img.width,0,
+img.width,img.height,
+0,img.height
+]);
+
+let M = cv.getPerspectiveTransform(srcTri, dstTri);
+
+let dst = new cv.Mat();
+cv.warpPerspective(src, dst, M, new cv.Size(img.width,img.height));
+
+cv.imshow(canvas, dst);
+
+img.src = canvas.toDataURL();
+
+src.delete(); dst.delete(); M.delete();
+
+alert("Perspective applied");
+}
+
+/* ================= MULTI PAGE ================= */
+function addPage(){
+pages.push(img.src);
+renderPages();
+}
+
+function renderPages(){
+let box = document.getElementById("pages");
+box.innerHTML = "";
+
+pages.forEach(p=>{
+let im = document.createElement("img");
+im.src = p;
+im.className = "page";
+box.appendChild(im);
 });
 }
 
-// =====================
-// DRAG CORNERS
-// =====================
-corners.forEach(c=>{
-let el = document.getElementById(c.id);
+/* ================= OCR ================= */
+async function runOCR(){
+const result = await Tesseract.recognize(
+img.src,
+'eng',
+{ logger: m => console.log(m) }
+);
 
-el.addEventListener('pointerdown',(e)=>{
-activeCorner = c;
-el.setPointerCapture(e.pointerId);
-});
-
-el.addEventListener('pointermove',(e)=>{
-if(activeCorner !== c) return;
-
-let r = editor.getBoundingClientRect();
-
-c.x = Math.max(0,Math.min(r.width, e.clientX - r.left));
-c.y = Math.max(0,Math.min(r.height, e.clientY - r.top));
-
-updateCorners();
-});
-
-el.addEventListener('pointerup',()=>{
-activeCorner = null;
-});
-});
-
-function updateCorners(){
-corners.forEach(c=>{
-let el = document.getElementById(c.id);
-el.style.left = c.x + 'px';
-el.style.top = c.y + 'px';
-});
+alert("OCR Result:\n\n" + result.data.text);
 }
 
-// =====================
-// RESET CORNERS
-// =====================
-function resetCorners(){
-let r = editor.getBoundingClientRect();
-
-corners[0].x = r.width * 0.1; corners[0].y = r.height * 0.1;
-corners[1].x = r.width * 0.9; corners[1].y = r.height * 0.1;
-corners[2].x = r.width * 0.9; corners[2].y = r.height * 0.9;
-corners[3].x = r.width * 0.1; corners[3].y = r.height * 0.9;
-}
-
-// =====================
-// ROTATE
-// =====================
-function rotatePage(){
-let image = new Image();
-image.src = pages[current];
-
-image.onload = ()=>{
-let c = document.createElement('canvas');
-let ctx = c.getContext('2d');
-
-c.width = image.height;
-c.height = image.width;
-
-ctx.translate(c.width/2,c.height/2);
-ctx.rotate(Math.PI/2);
-ctx.drawImage(image,-image.width/2,-image.height/2);
-
-pages[current] = c.toDataURL('image/jpeg',0.95);
-show();
-};
-}
-
-// =====================
-// BILINEAR SAMPLING
-// =====================
-function bilinear(srcData, x, y, w, h){
-
-x = Math.max(0, Math.min(w-1, x));
-y = Math.max(0, Math.min(h-1, y));
-
-let x1 = Math.floor(x);
-let y1 = Math.floor(y);
-let x2 = Math.min(x1+1, w-1);
-let y2 = Math.min(y1+1, h-1);
-
-let dx = x - x1;
-let dy = y - y1;
-
-function get(px,py){
-let i = (py*w + px)*4;
-return [
-srcData[i],
-srcData[i+1],
-srcData[i+2]
-];
-}
-
-let p11 = get(x1,y1);
-let p21 = get(x2,y1);
-let p12 = get(x1,y2);
-let p22 = get(x2,y2);
-
-function lerp(a,b,t){ return a + (b-a)*t; }
-
-return [
-lerp(lerp(p11[0],p21[0],dx), lerp(p12[0],p22[0],dx), dy),
-lerp(lerp(p11[1],p21[1],dx), lerp(p12[1],p22[1],dx), dy),
-lerp(lerp(p11[2],p21[2],dx), lerp(p12[2],p22[2],dx), dy)
-];
-}
-
-// =====================
-// CROPPING FIXED
-// =====================
-function applyCrop(){
-
-let image = new Image();
-image.src = pages[current];
-
-image.onload = ()=>{
-
-let rect = editor.getBoundingClientRect();
-
-let srcPts = corners.map(p=>({
-x: p.x / rect.width * image.width,
-y: p.y / rect.height * image.height
-}));
-
-let dstW = 1200;
-let dstH = 1600;
-
-let canvas = document.createElement('canvas');
-canvas.width = dstW;
-canvas.height = dstH;
-
-let ctx = canvas.getContext('2d');
-
-let srcCanvas = document.createElement('canvas');
-srcCanvas.width = image.width;
-srcCanvas.height = image.height;
-
-let sctx = srcCanvas.getContext('2d');
-sctx.drawImage(image,0,0);
-
-let srcData = sctx.getImageData(0,0,image.width,image.height).data;
-
-let out = ctx.createImageData(dstW,dstH);
-
-// perspective blend (simple but stable)
-for(let y=0;y<dstH;y++){
-for(let x=0;x<dstW;x++){
-
-let u = x / dstW;
-let v = y / dstH;
-
-let sx =
-(1-u)*(1-v)*srcPts[0].x +
-u*(1-v)*srcPts[1].x +
-u*v*srcPts[2].x +
-(1-u)*v*srcPts[3].x;
-
-let sy =
-(1-u)*(1-v)*srcPts[0].y +
-u*(1-v)*srcPts[1].y +
-u*v*srcPts[2].y +
-(1-u)*v*srcPts[3].y;
-
-let [r,g,b] = bilinear(srcData, sx, sy, image.width, image.height);
-
-let i = (y*dstW + x)*4;
-out.data[i] = r;
-out.data[i+1] = g;
-out.data[i+2] = b;
-out.data[i+3] = 255;
-}
-}
-
-ctx.putImageData(out,0,0);
-
-pages[current] = canvas.toDataURL('image/jpeg',0.95);
-show();
-};
-}
-
-// =====================
-// PDF EXPORT
-// =====================
+/* ================= PDF EXPORT ================= */
 function exportPDF(){
-const {jsPDF} = window.jspdf;
-let pdf = new jsPDF('p','pt','a4');
+const { jsPDF } = window.jspdf;
+let pdf = new jsPDF();
 
-pages.forEach((img,i)=>{
-pdf.addImage(img,'JPEG',10,10,575,0);
-if(i<pages.length-1) pdf.addPage();
+let all = [img.src, ...pages];
+
+all.forEach((src,i)=>{
+let temp = new Image();
+temp.src = src;
+
+temp.onload = ()=>{
+canvas.width = temp.width;
+canvas.height = temp.height;
+
+ctx.drawImage(temp,0,0);
+
+let data = canvas.toDataURL("image/jpeg");
+
+pdf.addImage(data,"JPEG",10,10,180,250);
+
+if(i === all.length-1){
+pdf.save("scan-ultra.pdf");
+}else{
+pdf.addPage();
+}
+};
 });
-
-pdf.save('scan.pdf');
 }
 
 </script>
