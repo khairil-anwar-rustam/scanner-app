@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Scanner Ultra Pro FIXED</title>
+<title>Scanner Ultra Pro AI</title>
 
 <style>
 body{
@@ -63,18 +63,18 @@ cursor:grab;
 z-index:10;
 }
 
+#pages{
+display:flex;
+overflow-x:auto;
+padding:10px;
+}
+
 .page{
 width:80px;
 height:100px;
 object-fit:cover;
 border:2px solid #22c55e;
 margin:5px;
-}
-
-#pages{
-display:flex;
-overflow-x:auto;
-padding:10px;
 }
 
 canvas{display:none;}
@@ -84,12 +84,12 @@ canvas{display:none;}
 
 <body>
 
-<header>📄 Scanner ULTRA PRO (FIXED VERSION)</header>
+<header>📄 Scanner ULTRA PRO AI (Auto Border Detection)</header>
 
 <div id="controls">
 <input type="file" id="fileInput" accept="image/*">
 
-<button onclick="autoDetect()">Auto Edge</button>
+<button onclick="autoDetectBorder()">AI Auto Detect</button>
 <button onclick="applyWarp()">Perspective Fix</button>
 <button onclick="addPage()">Add Page</button>
 <button onclick="exportPDF()">Export PDF</button>
@@ -118,18 +118,16 @@ let fileInput = document.getElementById("fileInput");
 let canvas = document.getElementById("canvas");
 let ctx = canvas.getContext("2d");
 
-let pages = [];
-let dragging = null;
 let editor = document.getElementById("editor");
 
+let pages = [];
+let dragging = null;
+
 let corners = [
-document.getElementById("c1"),
-document.getElementById("c2"),
-document.getElementById("c3"),
-document.getElementById("c4")
+c1,c2,c3,c4
 ];
 
-/* ================= IMAGE LOAD ================= */
+/* ================= LOAD IMAGE ================= */
 fileInput.onchange = e=>{
 let file = e.target.files[0];
 let reader = new FileReader();
@@ -142,7 +140,7 @@ img.onload = ()=> initCorners();
 reader.readAsDataURL(file);
 };
 
-/* ================= CORNERS ================= */
+/* ================= INIT CORNERS ================= */
 function initCorners(){
 corners.forEach((c,i)=>{
 c.style.left = (20 + i*40) + "px";
@@ -165,36 +163,75 @@ dragging.style.top = (e.clientY - rect.top) + "px";
 document.onmouseup = ()=> dragging = null;
 }
 
-/* ================= OPEN CV READY CHECK ================= */
-function waitCV(callback){
-if(window.cv && cv.Mat){
-callback();
-}else{
-alert("OpenCV still loading...");
-}
+/* ================= AI BORDER DETECTION ================= */
+function autoDetectBorder(){
+if(!window.cv){
+alert("OpenCV loading...");
+return;
 }
 
-/* ================= EDGE DETECT ================= */
-function autoDetect(){
-waitCV(()=>{
 let src = cv.imread(img);
 let gray = new cv.Mat();
+let blur = new cv.Mat();
 let edges = new cv.Mat();
+let hierarchy = new cv.Mat();
+let contours = new cv.MatVector();
 
 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-cv.Canny(gray, edges, 80, 200);
+cv.GaussianBlur(gray, blur, new cv.Size(5,5), 0);
+cv.Canny(blur, edges, 50, 150);
 
-cv.imshow(canvas, edges);
+cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-src.delete(); gray.delete(); edges.delete();
+let maxArea = 0;
+let best = null;
 
-alert("Edge preview done");
-});
+/* find largest quadrilateral */
+for(let i=0;i<contours.size();i++){
+let cnt = contours.get(i);
+let approx = new cv.Mat();
+
+cv.approxPolyDP(cnt, approx, 0.02 * cv.arcLength(cnt, true), true);
+
+if(approx.rows === 4){
+let area = cv.contourArea(cnt);
+if(area > maxArea){
+maxArea = area;
+best = approx;
+}
+}
 }
 
-/* ================= PERSPECTIVE WARP (REAL CORNERS) ================= */
+/* fallback */
+if(!best){
+alert("No document detected - try better lighting");
+src.delete(); gray.delete(); blur.delete(); edges.delete(); contours.delete(); hierarchy.delete();
+return;
+}
+
+/* convert detected points -> corners */
+let pts = [];
+for(let i=0;i<4;i++){
+pts.push(best.data32S[i*2]);
+pts.push(best.data32S[i*2+1]);
+}
+
+/* normalize to image display */
+let rect = editor.getBoundingClientRect();
+
+for(let i=0;i<4;i++){
+corners[i].style.left = (pts[i*2] / img.width * rect.width) + "px";
+corners[i].style.top  = (pts[i*2+1] / img.height * rect.height) + "px";
+}
+
+alert("AI border detected ✔");
+
+src.delete(); gray.delete(); blur.delete(); edges.delete(); contours.delete(); hierarchy.delete();
+}
+
+/* ================= PERSPECTIVE WARP ================= */
 function applyWarp(){
-waitCV(()=>{
+if(!window.cv) return;
 
 let rect = editor.getBoundingClientRect();
 
@@ -224,7 +261,7 @@ let src = cv.imread(img);
 let M = cv.getPerspectiveTransform(srcPts, dstPts);
 
 let dst = new cv.Mat();
-cv.warpPerspective(src, dst, M, new cv.Size(img.width, img.height));
+cv.warpPerspective(src, dst, M, new cv.Size(img.width,img.height));
 
 cv.imshow(canvas, dst);
 img.src = canvas.toDataURL();
@@ -232,8 +269,7 @@ img.src = canvas.toDataURL();
 src.delete(); dst.delete(); M.delete();
 srcPts.delete(); dstPts.delete();
 
-alert("Warp applied");
-});
+alert("Warp applied ✔");
 }
 
 /* ================= MULTI PAGE ================= */
@@ -260,7 +296,7 @@ let result = await Tesseract.recognize(img.src,'eng');
 alert(result.data.text);
 }
 
-/* ================= PDF EXPORT FIXED ================= */
+/* ================= PDF EXPORT ================= */
 async function exportPDF(){
 const { jsPDF } = window.jspdf;
 let pdf = new jsPDF();
@@ -275,7 +311,6 @@ temp.src = all[i];
 temp.onload = ()=>{
 canvas.width = temp.width;
 canvas.height = temp.height;
-ctx.clearRect(0,0,canvas.width,canvas.height);
 ctx.drawImage(temp,0,0);
 
 let data = canvas.toDataURL("image/jpeg");
@@ -289,7 +324,7 @@ res();
 });
 }
 
-pdf.save("scan-ultra.pdf");
+pdf.save("scan-ai-pro.pdf");
 }
 
 </script>
