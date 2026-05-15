@@ -133,6 +133,7 @@ resetCorners();
 updateCorners();
 },50);
 };
+render();
 }
 
 function render(){
@@ -184,15 +185,15 @@ el.style.top = c.y + 'px';
 }
 
 // =====================
-// RESET
+// RESET CORNERS
 // =====================
 function resetCorners(){
 let r = editor.getBoundingClientRect();
 
-corners[0].x = 40; corners[0].y = 40;
-corners[1].x = r.width - 40; corners[1].y = 40;
-corners[2].x = r.width - 40; corners[2].y = r.height - 40;
-corners[3].x = 40; corners[3].y = r.height - 40;
+corners[0].x = r.width * 0.1; corners[0].y = r.height * 0.1;
+corners[1].x = r.width * 0.9; corners[1].y = r.height * 0.1;
+corners[2].x = r.width * 0.9; corners[2].y = r.height * 0.9;
+corners[3].x = r.width * 0.1; corners[3].y = r.height * 0.9;
 }
 
 // =====================
@@ -214,52 +215,51 @@ ctx.rotate(Math.PI/2);
 ctx.drawImage(image,-image.width/2,-image.height/2);
 
 pages[current] = c.toDataURL('image/jpeg',0.95);
-show(); render();
+show();
 };
 }
 
 // =====================
-// HOMOGRAPHY MATH
+// BILINEAR SAMPLING
 // =====================
-function solveH(p){
-let x0=p[0].x, y0=p[0].y;
-let x1=p[1].x, y1=p[1].y;
-let x2=p[2].x, y2=p[2].y;
-let x3=p[3].x, y3=p[3].y;
+function bilinear(srcData, x, y, w, h){
 
-let dx1 = x1 - x2;
-let dx2 = x3 - x2;
-let sx = x0 - x1 + x2 - x3;
+x = Math.max(0, Math.min(w-1, x));
+y = Math.max(0, Math.min(h-1, y));
 
-let dy1 = y1 - y2;
-let dy2 = y3 - y2;
-let sy = y0 - y1 + y2 - y3;
+let x1 = Math.floor(x);
+let y1 = Math.floor(y);
+let x2 = Math.min(x1+1, w-1);
+let y2 = Math.min(y1+1, h-1);
 
-let det = dx1*dy2 - dx2*dy1;
+let dx = x - x1;
+let dy = y - y1;
 
-let g = (sx*dy2 - dx2*sy)/det;
-let h = (dx1*sy - sx*dy1)/det;
-
-let a = x1 - x0 + g*x1;
-let b = x3 - x0 + h*x3;
-let c = x0;
-let d = y1 - y0 + g*y1;
-let e = y3 - y0 + h*y3;
-let f = y0;
-
-return [a,b,c,d,e,f,g,h,1];
+function get(px,py){
+let i = (py*w + px)*4;
+return [
+srcData[i],
+srcData[i+1],
+srcData[i+2]
+];
 }
 
-function warpPoint(m,x,y){
-let den = m[6]*x + m[7]*y + 1;
-return {
-x:(m[0]*x + m[1]*y + m[2]) / den,
-y:(m[3]*x + m[4]*y + m[5]) / den
-};
+let p11 = get(x1,y1);
+let p21 = get(x2,y1);
+let p12 = get(x1,y2);
+let p22 = get(x2,y2);
+
+function lerp(a,b,t){ return a + (b-a)*t; }
+
+return [
+lerp(lerp(p11[0],p21[0],dx), lerp(p12[0],p22[0],dx), dy),
+lerp(lerp(p11[1],p21[1],dx), lerp(p12[1],p22[1],dx), dy),
+lerp(lerp(p11[2],p21[2],dx), lerp(p12[2],p22[2],dx), dy)
+];
 }
 
 // =====================
-// CROPPING FIXED (REAL)
+// CROPPING FIXED
 // =====================
 function applyCrop(){
 
@@ -271,28 +271,19 @@ image.onload = ()=>{
 let rect = editor.getBoundingClientRect();
 
 let srcPts = corners.map(p=>({
-x:p.x/rect.width * image.width,
-y:p.y/rect.height * image.height
+x: p.x / rect.width * image.width,
+y: p.y / rect.height * image.height
 }));
 
 let dstW = 1200;
 let dstH = 1600;
-
-let dstPts = [
-{x:0,y:0},
-{x:dstW,y:0},
-{x:dstW,y:dstH},
-{x:0,y:dstH}
-];
-
-let H = solveH(srcPts);
-let invH = solveH(dstPts); // simplified inverse approximation
 
 let canvas = document.createElement('canvas');
 canvas.width = dstW;
 canvas.height = dstH;
 
 let ctx = canvas.getContext('2d');
+
 let srcCanvas = document.createElement('canvas');
 srcCanvas.width = image.width;
 srcCanvas.height = image.height;
@@ -304,35 +295,39 @@ let srcData = sctx.getImageData(0,0,image.width,image.height).data;
 
 let out = ctx.createImageData(dstW,dstH);
 
-function get(x,y){
-x=Math.max(0,Math.min(image.width-1,x));
-y=Math.max(0,Math.min(image.height-1,y));
-let i=(y*image.width+x)*4;
-return [srcData[i],srcData[i+1],srcData[i+2],255];
-}
-
+// perspective blend (simple but stable)
 for(let y=0;y<dstH;y++){
 for(let x=0;x<dstW;x++){
 
-let p = warpPoint(H,x,y);
+let u = x / dstW;
+let v = y / dstH;
 
-let px = Math.floor(p.x);
-let py = Math.floor(p.y);
+let sx =
+(1-u)*(1-v)*srcPts[0].x +
+u*(1-v)*srcPts[1].x +
+u*v*srcPts[2].x +
+(1-u)*v*srcPts[3].x;
 
-let [r,g,b,a]=get(px,py);
+let sy =
+(1-u)*(1-v)*srcPts[0].y +
+u*(1-v)*srcPts[1].y +
+u*v*srcPts[2].y +
+(1-u)*v*srcPts[3].y;
 
-let i=(y*dstW+x)*4;
-out.data[i]=r;
-out.data[i+1]=g;
-out.data[i+2]=b;
-out.data[i+3]=a;
+let [r,g,b] = bilinear(srcData, sx, sy, image.width, image.height);
+
+let i = (y*dstW + x)*4;
+out.data[i] = r;
+out.data[i+1] = g;
+out.data[i+2] = b;
+out.data[i+3] = 255;
 }
 }
 
 ctx.putImageData(out,0,0);
 
-pages[current]=canvas.toDataURL('image/jpeg',0.95);
-show(); render();
+pages[current] = canvas.toDataURL('image/jpeg',0.95);
+show();
 };
 }
 
@@ -354,4 +349,4 @@ pdf.save('scan.pdf');
 </script>
 
 </body>
-</html>
+  </html>
