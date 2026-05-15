@@ -15,8 +15,6 @@ button.secondary{background:#374151}
 #pages{display:flex;overflow-x:auto;gap:8px;padding:10px;margin-bottom:110px}
 .thumb{width:60px;height:80px;object-fit:cover;border:2px solid #334155}
 .thumb.active{border-color:#22c55e}
-.mode{opacity:.7}
-.mode.active{opacity:1;outline:2px solid #22c55e}
 #overlay{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;}
 </style>
 </head>
@@ -26,6 +24,7 @@ button.secondary{background:#374151}
 <div id="editor">
 <img id="img">
 <canvas id="overlay"></canvas>
+
 <div class="corner" id="c1"></div>
 <div class="corner" id="c2"></div>
 <div class="corner" id="c3"></div>
@@ -39,13 +38,18 @@ button.secondary{background:#374151}
 <button onclick="rotatePage()">Rotate</button>
 <button onclick="applyCrop()">Crop</button>
 <button onclick="exportPDF()">PDF</button>
-
-<button class="secondary mode active" id="mColor" onclick="setMode('color')">Color</button>
-<button class="secondary mode" id="mGray" onclick="setMode('gray')">Gray</button>
-<button class="secondary mode" id="mBW" onclick="setMode('bw')">B/W</button>
 </div>
 
 <div id="pages"></div>
+
+<!-- preview -->
+<div id="previewBox" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);display:none;align-items:center;justify-content:center;flex-direction:column;z-index:9999;">
+<img id="previewImg" style="max-width:90%;max-height:70%;border-radius:10px;">
+<div style="margin-top:10px;display:flex;gap:10px;">
+<button onclick="confirmCrop()">Confirm</button>
+<button onclick="cancelCrop()" class="secondary">Cancel</button>
+</div>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
@@ -53,10 +57,11 @@ button.secondary{background:#374151}
 
 let pages=[];
 let current=0;
+
 let img=document.getElementById('img');
 let editor=document.getElementById('editor');
 let file=document.getElementById('file');
-let mode='color';
+
 let tempCroppedImage=null;
 
 let corners=[
@@ -66,7 +71,7 @@ let corners=[
 {x:40,y:400,id:'c4'}
 ];
 
-// ---------------- LOAD ----------------
+// LOAD
 file.onchange=(e)=>{
 [...e.target.files].forEach(f=>{
 let r=new FileReader();
@@ -80,19 +85,21 @@ r.readAsDataURL(f);
 });
 };
 
-// ---------------- SAFE SHOW (FIX) ----------------
+// SHOW
 function show(){
 if(!pages.length) return;
 
 img.src=pages[current];
 
+img.onload=()=>{
 setTimeout(()=>{
 updateCorners();
 drawOverlay();
-},80);
+},60);
+};
 }
 
-// ---------------- RENDER ----------------
+// RENDER
 function render(){
 let p=document.getElementById('pages');
 p.innerHTML='';
@@ -105,14 +112,7 @@ p.appendChild(im);
 });
 }
 
-// ---------------- MODE ----------------
-function setMode(m){
-mode=m;
-['mColor','mGray','mBW'].forEach(id=>document.getElementById(id).classList.remove('active'));
-document.getElementById('m'+m.charAt(0).toUpperCase()+m.slice(1)).classList.add('active');
-}
-
-// ---------------- DRAG CORNERS ----------------
+// DRAG CORNERS
 corners.forEach(c=>{
 let el=document.getElementById(c.id);
 let drag=false;
@@ -125,12 +125,12 @@ window.addEventListener('touchmove',move);
 
 function move(e){
 if(!drag)return;
+
 let r=editor.getBoundingClientRect();
 
 let x=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
 let y=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
 
-// clamp
 c.x=Math.max(0,Math.min(r.width,x));
 c.y=Math.max(0,Math.min(r.height,y));
 
@@ -147,19 +147,19 @@ el.style.top=c.y+'px';
 drawOverlay();
 }
 
-// ---------------- OVERLAY ----------------
+// OVERLAY
 function drawOverlay(){
 let canvas=document.getElementById('overlay');
 let ctx=canvas.getContext('2d');
 
-let rect=editor.getBoundingClientRect();
-canvas.width=rect.width;
-canvas.height=rect.height;
+let r=editor.getBoundingClientRect();
+canvas.width=r.width;
+canvas.height=r.height;
 
-ctx.clearRect(0,0,canvas.width,canvas.height);
+ctx.clearRect(0,0,r.width,r.height);
 
 ctx.fillStyle="rgba(0,0,0,0.55)";
-ctx.fillRect(0,0,canvas.width,canvas.height);
+ctx.fillRect(0,0,r.width,r.height);
 
 ctx.globalCompositeOperation="destination-out";
 ctx.beginPath();
@@ -173,7 +173,7 @@ ctx.fill();
 ctx.globalCompositeOperation="source-over";
 }
 
-// ---------------- IMAGE FIT ----------------
+// IMAGE SCALE FIX
 function getImageRect(){
 let r=img.getBoundingClientRect();
 let iw=img.naturalWidth;
@@ -181,13 +181,16 @@ let ih=img.naturalHeight;
 
 let scale=Math.min(r.width/iw,r.height/ih);
 
-let offsetX=(r.width-iw*scale)/2;
-let offsetY=(r.height-ih*scale)/2;
+let drawW=iw*scale;
+let drawH=ih*scale;
+
+let offsetX=(r.width-drawW)/2;
+let offsetY=(r.height-drawH)/2;
 
 return{scale,offsetX,offsetY};
 }
 
-// ---------------- ROTATE ----------------
+// ROTATE
 function rotatePage(){
 let image=new Image();
 image.src=pages[current];
@@ -209,35 +212,9 @@ render();
 };
 }
 
-// ---------------- MODE FILTER ----------------
-function applyMode(canvas){
-if(mode==='color') return;
-
-let ctx=canvas.getContext('2d');
-let data=ctx.getImageData(0,0,canvas.width,canvas.height);
-let d=data.data;
-
-for(let i=0;i<d.length;i+=4){
-let r=d[i],g=d[i+1],b=d[i+2];
-let gray=0.3*r+0.59*g+0.11*b;
-
-if(mode==='gray'){
-let v=(gray-128)*1.2+128;
-d[i]=d[i+1]=d[i+2]=v;
-}
-
-if(mode==='bw'){
-let v=(gray-128)*1.6+128;
-d[i]=d[i+1]=d[i+2]=(v>150?255:0);
-}
-}
-ctx.putImageData(data,0,0);
-}
-
-// ---------------- HOMOGRAPHY (FIXED STABILITY) ----------------
+// HOMOGRAPHY
 function H(sx,sy,dx,dy){
 let A=[];
-
 for(let i=0;i<4;i++){
 A.push([sx[i],sy[i],1,0,0,0,-dx[i]*sx[i],-dx[i]*sy[i],dx[i]]);
 A.push([0,0,0,sx[i],sy[i],1,-dy[i]*sx[i],-dy[i]*sy[i],dy[i]]);
@@ -247,16 +224,12 @@ let m=A.map(r=>r.slice());
 
 for(let i=0;i<8;i++){
 let max=i;
-
 for(let k=i+1;k<8;k++){
 if(Math.abs(m[k][i])>Math.abs(m[max][i])) max=k;
 }
-
 [m[i],m[max]]=[m[max],m[i]];
 
-// FIXED DIVISION SAFETY
-let div=m[i][i];
-if(Math.abs(div)<1e-8) div=1e-8;
+let div=Math.abs(m[i][i])<1e-8?1e-8:m[i][i];
 
 for(let j=i;j<9;j++) m[i][j]/=div;
 
@@ -274,7 +247,7 @@ h[8]=1;
 return h;
 }
 
-// ---------------- APPLY CROP ----------------
+// APPLY CROP (FIXED ZOOM OUT)
 function applyCrop(){
 if(!pages.length) return;
 
@@ -286,16 +259,30 @@ image.onload=()=>{
 let canvas=document.createElement('canvas');
 let ctx=canvas.getContext('2d');
 
-let w=1200,h=1600;
-canvas.width=w;
-canvas.height=h;
-
 let info=getImageRect();
 
 let src=corners.map(p=>({
 x:(p.x-info.offsetX)/info.scale,
 y:(p.y-info.offsetY)/info.scale
 }));
+
+// 🔥 FIX: crop bounding box (NO zoom out)
+let minX=Math.min(...src.map(p=>p.x));
+let maxX=Math.max(...src.map(p=>p.x));
+let minY=Math.min(...src.map(p=>p.y));
+let maxY=Math.max(...src.map(p=>p.y));
+
+let w=Math.floor(maxX-minX);
+let h=Math.floor(maxY-minY);
+
+canvas.width=w;
+canvas.height=h;
+
+// shift coordinates
+src.forEach(p=>{
+p.x-=minX;
+p.y-=minY;
+});
 
 let dst=[
 {x:0,y:0},
@@ -305,10 +292,10 @@ let dst=[
 ];
 
 let Hm=H(
-[src[0].x,src[1].x,src[2].x,src[3].x],
-[src[0].y,src[1].y,src[2].y,src[3].y],
-[dst[0].x,dst[1].x,dst[2].x,dst[3].x],
-[dst[0].y,dst[1].y,dst[2].y,dst[3].y]
+src.map(p=>p.x),
+src.map(p=>p.y),
+dst.map(p=>p.x),
+dst.map(p=>p.y)
 );
 
 function map(x,y){
@@ -327,7 +314,6 @@ sctx.drawImage(image,0,0);
 let srcData=sctx.getImageData(0,0,image.width,image.height);
 let out=sctx.createImageData(w,h);
 
-// simple sampling (stable)
 for(let y=0;y<h;y++){
 for(let x=0;x<w;x++){
 
@@ -347,7 +333,6 @@ out.data[o+3]=255;
 }
 
 ctx.putImageData(out,0,0);
-applyMode(canvas);
 
 tempCroppedImage=canvas.toDataURL('image/jpeg',1);
 
@@ -356,7 +341,21 @@ document.getElementById('previewBox').style.display='flex';
 };
 }
 
-// ---------------- PDF ----------------
+// CONFIRM
+function confirmCrop(){
+pages[current]=tempCroppedImage;
+document.getElementById('previewBox').style.display='none';
+show();
+render();
+}
+
+// CANCEL
+function cancelCrop(){
+tempCroppedImage=null;
+document.getElementById('previewBox').style.display='none';
+}
+
+// PDF
 function exportPDF(){
 const {jsPDF}=window.jspdf;
 let pdf=new jsPDF('p','pt','a4');
@@ -369,29 +368,7 @@ if(i<pages.length-1)pdf.addPage();
 pdf.save('scan.pdf');
 }
 
-// ---------------- PREVIEW ----------------
-function confirmCrop(){
-pages[current]=tempCroppedImage;
-document.getElementById('previewBox').style.display='none';
-show();
-render();
-}
-
-function cancelCrop(){
-tempCroppedImage=null;
-document.getElementById('previewBox').style.display='none';
-}
-
 </script>
-
-<!-- PREVIEW UI -->
-<div id="previewBox" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);display:none;align-items:center;justify-content:center;flex-direction:column;z-index:9999;">
-<img id="previewImg" style="max-width:90%;max-height:70%;border-radius:10px;">
-<div style="margin-top:10px;display:flex;gap:10px;">
-<button onclick="confirmCrop()">Confirm</button>
-<button onclick="cancelCrop()" class="secondary">Cancel</button>
-</div>
-</div>
 
 </body>
   </html>
