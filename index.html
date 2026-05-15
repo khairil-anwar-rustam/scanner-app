@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pro Scanner FIXED 4-Corner</title>
+<title>Scanner FIXED PRO</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
@@ -44,13 +44,11 @@ button{
   background:#111827;
   border-radius:10px;
   overflow:hidden;
-  touch-action:none;
 }
 
 #img{
   width:100%;
   display:block;
-  pointer-events:none;
 }
 
 .point{
@@ -61,10 +59,10 @@ button{
   position:absolute;
   transform:translate(-50%,-50%);
   cursor:pointer;
-  border:2px solid black;
+  border:2px solid #000;
 }
 
-.list .card{
+.card{
   background:#1e293b;
   padding:10px;
   margin-top:10px;
@@ -86,7 +84,7 @@ button{
 <body>
 
 <div class="container">
-<h1>Scanner Pro FIXED (Drag Working)</h1>
+<h1>Scanner Pro FIXED (No White PDF)</h1>
 
 <input type="file" id="file" accept="image/*">
 
@@ -112,20 +110,20 @@ const { jsPDF } = window.jspdf;
 let img = new Image();
 let scans = [];
 
-const editor = document.getElementById('editor');
-const imgEl = document.getElementById('img');
+const editor = document.getElementById("editor");
+const imgEl = document.getElementById("img");
 
-const points = [
-  document.getElementById('p1'),
-  document.getElementById('p2'),
-  document.getElementById('p3'),
-  document.getElementById('p4')
+const pts = [
+  document.getElementById("p1"),
+  document.getElementById("p2"),
+  document.getElementById("p3"),
+  document.getElementById("p4")
 ];
 
-let activePoint = null;
+let active = null;
 
-// 📌 Load image
-document.getElementById('file').addEventListener('change', e=>{
+// load image
+document.getElementById("file").addEventListener("change", e=>{
   const file = e.target.files[0];
   if(!file) return;
 
@@ -133,160 +131,143 @@ document.getElementById('file').addEventListener('change', e=>{
   reader.onload = ev=>{
     img.src = ev.target.result;
     imgEl.src = ev.target.result;
-    editor.style.display = 'block';
+    editor.style.display = "block";
   };
   reader.readAsDataURL(file);
 });
 
-// 📌 Init points AFTER image load
+// init points
 img.onload = ()=>{
-  const rect = editor.getBoundingClientRect();
+  const r = editor.getBoundingClientRect();
 
-  setPoint(points[0], 40, 40);
-  setPoint(points[1], rect.width-40, 40);
-  setPoint(points[2], rect.width-40, rect.height-40);
-  setPoint(points[3], 40, rect.height-40);
+  set(pts[0],40,40);
+  set(pts[1],r.width-40,40);
+  set(pts[2],r.width-40,r.height-40);
+  set(pts[3],40,r.height-40);
 };
 
-function setPoint(el,x,y){
-  el.style.left = x + "px";
-  el.style.top = y + "px";
+function set(el,x,y){
+  el.style.left = x+"px";
+  el.style.top = y+"px";
 }
 
-// ============================
-// 🔥 FIXED DRAG SYSTEM
-// ============================
-
-// pointer down (mouse + touch)
-points.forEach(p=>{
-  p.addEventListener("pointerdown",(e)=>{
-    activePoint = p;
-    e.preventDefault();
+// drag system (FIXED)
+pts.forEach(p=>{
+  p.addEventListener("pointerdown",e=>{
+    active = p;
   });
 });
 
-// move anywhere
-document.addEventListener("pointermove",(e)=>{
-  if(!activePoint) return;
+document.addEventListener("pointermove",e=>{
+  if(!active) return;
 
-  const rect = editor.getBoundingClientRect();
+  const r = editor.getBoundingClientRect();
 
-  let x = e.clientX - rect.left;
-  let y = e.clientY - rect.top;
+  let x = e.clientX - r.left;
+  let y = e.clientY - r.top;
 
-  // clamp inside editor
-  x = Math.max(0, Math.min(rect.width, x));
-  y = Math.max(0, Math.min(rect.height, y));
+  x = Math.max(0,Math.min(r.width,x));
+  y = Math.max(0,Math.min(r.height,y));
 
-  activePoint.style.left = x + "px";
-  activePoint.style.top = y + "px";
+  active.style.left = x+"px";
+  active.style.top = y+"px";
 });
 
-// release
-document.addEventListener("pointerup",()=>{
-  activePoint = null;
-});
+document.addEventListener("pointerup",()=>active=null);
 
-// ============================
-// Perspective Warp (simple but stable)
-// ============================
-function warp(src, pts, w, h){
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
+// get points
+function getPoints(){
+  const r = editor.getBoundingClientRect();
 
-  canvas.width = w;
-  canvas.height = h;
+  return pts.map(p=>({
+    x: parseFloat(p.style.left),
+    y: parseFloat(p.style.top)
+  }));
+}
 
-  const imgObj = new Image();
-  imgObj.src = src;
-
+// ✅ FIXED perspective transform (NO WHITE OUTPUT)
+function transformToCanvas(src, p, w, h){
   return new Promise(res=>{
-    imgObj.onload = ()=>{
+    const i = new Image();
+    i.src = src;
 
-      const [p1,p2,p3,p4] = pts;
-      const steps = 120;
+    i.onload = ()=>{
 
-      for(let i=0;i<steps;i++){
-        for(let j=0;j<steps;j++){
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
 
-          const u = i/steps;
-          const v = j/steps;
+      canvas.width = w;
+      canvas.height = h;
 
-          const topX = p1.x + (p2.x - p1.x)*u;
-          const topY = p1.y + (p2.y - p1.y)*u;
+      // simple but STABLE perspective approximation
+      ctx.save();
 
-          const botX = p4.x + (p3.x - p4.x)*u;
-          const botY = p4.y + (p3.y - p4.y)*u;
+      const [a,b,c,d] = p;
 
-          const x = topX + (botX - topX)*v;
-          const y = topY + (botY - topY)*v;
+      ctx.setTransform(
+        (b.x - a.x)/w,
+        (b.y - a.y)/w,
+        (d.x - a.x)/h,
+        (d.y - a.y)/h,
+        a.x,
+        a.y
+      );
 
-          const sx = (x/editor.clientWidth) * imgObj.width;
-          const sy = (y/editor.clientHeight) * imgObj.height;
-
-          const dx = u*w;
-          const dy = v*h;
-
-          ctx.drawImage(imgObj, sx, sy, 2, 2, dx, dy, 2, 2);
-        }
-      }
+      ctx.drawImage(i,0,0,w,h);
+      ctx.restore();
 
       res(canvas.toDataURL("image/jpeg",0.95));
     };
   });
 }
 
-// get points
-function getPoints(){
-  const rect = editor.getBoundingClientRect();
-
-  return points.map(p=>({
-    x: parseFloat(p.style.left)/rect.width * editor.clientWidth,
-    y: parseFloat(p.style.top)/rect.height * editor.clientHeight
-  }));
-}
-
 // add scan
 async function addScan(){
-  const warped = await warp(img.src, getPoints(), 1000, 1400);
-  scans.push(warped);
+  const p = getPoints();
+  const result = await transformToCanvas(img.src,p,1000,1400);
+
+  scans.push(result);
   render();
 
-  editor.style.display = "none";
-  document.getElementById("file").value = "";
+  editor.style.display="none";
+  document.getElementById("file").value="";
 }
 
 // render
 function render(){
   const list = document.getElementById("list");
-  list.innerHTML = "";
+  list.innerHTML="";
 
   scans.forEach((s,i)=>{
     const div = document.createElement("div");
-    div.className = "card";
+    div.className="card";
 
-    div.innerHTML = `
+    div.innerHTML=`
       <div>Page ${i+1}</div>
       <img src="${s}">
-      <button class="delete" onclick="deleteScan(${i})">Delete</button>
+      <button class="delete" onclick="del(${i})">Delete</button>
     `;
 
     list.appendChild(div);
   });
 }
 
-// delete
-function deleteScan(i){
+function del(i){
   scans.splice(i,1);
   render();
 }
 
-// export PDF
+// export PDF (FIXED)
 function exportPDF(){
+  if(scans.length===0){
+    alert("No scans");
+    return;
+  }
+
   const doc = new jsPDF();
 
   scans.forEach((s,i)=>{
-    if(i!==0) doc.addPage();
+    if(i>0) doc.addPage();
     doc.addImage(s,"JPEG",10,10,190,260);
   });
 
