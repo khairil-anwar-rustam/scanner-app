@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Scanner Pro REAL Perspective Fix</title>
+<title>CamScanner Style Crop</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
@@ -44,6 +44,7 @@ button{
   background:#111827;
   border-radius:10px;
   overflow:hidden;
+  display:none;
 }
 
 #img{
@@ -51,16 +52,29 @@ button{
   display:block;
 }
 
-.point{
-  width:18px;
-  height:18px;
-  background:#00ff99;
-  border-radius:50%;
+.crop-box{
   position:absolute;
-  transform:translate(-50%,-50%);
-  cursor:pointer;
-  border:2px solid #000;
+  border:2px dashed #00ff99;
+  width:200px;
+  height:200px;
+  top:50px;
+  left:50px;
+  cursor:move;
+  touch-action:none;
 }
+
+.handle{
+  width:14px;
+  height:14px;
+  background:#00ff99;
+  position:absolute;
+  border-radius:50%;
+}
+
+.tl{top:-7px;left:-7px;}
+.tr{top:-7px;right:-7px;}
+.bl{bottom:-7px;left:-7px;}
+.br{bottom:-7px;right:-7px;}
 
 .card{
   background:#1e293b;
@@ -84,20 +98,22 @@ button{
 <body>
 
 <div class="container">
-<h1>Scanner Pro (REAL FIXED Perspective)</h1>
+<h1>CamScanner Style Crop</h1>
 
 <input type="file" id="file" accept="image/*">
 
-<div class="editor" id="editor" style="display:none;">
+<div class="editor" id="editor">
   <img id="img">
 
-  <div class="point" id="p1"></div>
-  <div class="point" id="p2"></div>
-  <div class="point" id="p3"></div>
-  <div class="point" id="p4"></div>
+  <div class="crop-box" id="cropBox">
+    <div class="handle tl"></div>
+    <div class="handle tr"></div>
+    <div class="handle bl"></div>
+    <div class="handle br"></div>
+  </div>
 </div>
 
-<button onclick="addScan()">Add Scan</button>
+<button onclick="addScan()">Add Cropped Scan</button>
 
 <div id="list"></div>
 
@@ -107,20 +123,16 @@ button{
 <script>
 const { jsPDF } = window.jspdf;
 
-let img = new Image();
 let scans = [];
+let img = new Image();
 
 const editor = document.getElementById("editor");
 const imgEl = document.getElementById("img");
+const cropBox = document.getElementById("cropBox");
 
-const pts = [
-  document.getElementById("p1"),
-  document.getElementById("p2"),
-  document.getElementById("p3"),
-  document.getElementById("p4")
-];
-
-let active = null;
+let dragging = false;
+let offsetX = 0;
+let offsetY = 0;
 
 // load image
 document.getElementById("file").addEventListener("change", e=>{
@@ -136,126 +148,74 @@ document.getElementById("file").addEventListener("change", e=>{
   reader.readAsDataURL(file);
 });
 
-// init points
-img.onload = ()=>{
-  const r = editor.getBoundingClientRect();
-
-  set(pts[0],40,40);
-  set(pts[1],r.width-40,40);
-  set(pts[2],r.width-40,r.height-40);
-  set(pts[3],40,r.height-40);
-};
-
-function set(el,x,y){
-  el.style.left = x+"px";
-  el.style.top = y+"px";
-}
-
-// drag (FIXED)
-pts.forEach(p=>{
-  p.addEventListener("pointerdown",()=> active=p);
+// move crop box
+cropBox.addEventListener("pointerdown", e=>{
+  dragging = true;
+  offsetX = e.offsetX;
+  offsetY = e.offsetY;
 });
 
-document.addEventListener("pointermove",e=>{
-  if(!active) return;
+document.addEventListener("pointermove", e=>{
+  if(!dragging) return;
 
-  const r = editor.getBoundingClientRect();
+  const rect = editor.getBoundingClientRect();
 
-  let x = e.clientX - r.left;
-  let y = e.clientY - r.top;
+  let x = e.clientX - rect.left - offsetX;
+  let y = e.clientY - rect.top - offsetY;
 
-  x = Math.max(0,Math.min(r.width,x));
-  y = Math.max(0,Math.min(r.height,y));
+  x = Math.max(0, Math.min(rect.width - cropBox.offsetWidth, x));
+  y = Math.max(0, Math.min(rect.height - cropBox.offsetHeight, y));
 
-  active.style.left = x+"px";
-  active.style.top = y+"px";
+  cropBox.style.left = x + "px";
+  cropBox.style.top = y + "px";
 });
 
-document.addEventListener("pointerup",()=> active=null);
+document.addEventListener("pointerup", ()=> dragging=false);
 
-// get points in correct order
-function getPoints(){
-  const r = editor.getBoundingClientRect();
+// crop function
+function cropImage(){
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
 
-  return pts.map(p=>({
-    x: parseFloat(p.style.left),
-    y: parseFloat(p.style.top)
-  }));
-}
+  const imgRect = imgEl.getBoundingClientRect();
+  const boxRect = cropBox.getBoundingClientRect();
 
-// ============================
-// 🔥 REAL PERSPECTIVE TRANSFORM
-// (Homography approximation using 2 triangles)
-// ============================
-function warp(src, p, width, height){
-  return new Promise(res=>{
-    const i = new Image();
-    i.src = src;
+  const scaleX = img.width / imgRect.width;
+  const scaleY = img.height / imgRect.height;
 
-    i.onload = ()=>{
+  const x = (boxRect.left - imgRect.left) * scaleX;
+  const y = (boxRect.top - imgRect.top) * scaleY;
+  const w = boxRect.width * scaleX;
+  const h = boxRect.height * scaleY;
 
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
+  canvas.width = w;
+  canvas.height = h;
 
-      canvas.width = width;
-      canvas.height = height;
+  ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
 
-      const [tl,tr,br,bl] = p;
-
-      const drawTriangle = (p0,p1,p2)=>{
-        ctx.save();
-
-        ctx.beginPath();
-        ctx.moveTo(p0.x,p0.y);
-        ctx.lineTo(p1.x,p1.y);
-        ctx.lineTo(p2.x,p2.y);
-        ctx.closePath();
-        ctx.clip();
-
-        // approximate transform
-        ctx.setTransform(
-          (p1.x - p0.x)/width,
-          (p1.y - p0.y)/width,
-          (p2.x - p0.x)/height,
-          (p2.y - p0.y)/height,
-          p0.x,
-          p0.y
-        );
-
-        ctx.drawImage(i,0,0,width,height);
-        ctx.restore();
-      };
-
-      // split into 2 triangles (THIS FIXES DISTORTION)
-      drawTriangle(tl,tr,bl);
-      drawTriangle(tr,br,bl);
-
-      res(canvas.toDataURL("image/jpeg",0.95));
-    };
-  });
+  return canvas.toDataURL("image/jpeg", 0.95);
 }
 
 // add scan
-async function addScan(){
-  const warped = await warp(img.src,getPoints(),1000,1400);
-
-  scans.push(warped);
+function addScan(){
+  const cropped = cropImage();
+  scans.push(cropped);
   render();
 
-  editor.style.display="none";
-  document.getElementById("file").value="";
+  editor.style.display = "none";
+  document.getElementById("file").value = "";
 }
 
-// render
+// render list
 function render(){
-  const list=document.getElementById("list");
-  list.innerHTML="";
+  const list = document.getElementById("list");
+  list.innerHTML = "";
 
   scans.forEach((s,i)=>{
-    const div=document.createElement("div");
-    div.className="card";
+    const div = document.createElement("div");
+    div.className = "card";
 
-    div.innerHTML=`
+    div.innerHTML = `
       <div>Page ${i+1}</div>
       <img src="${s}">
       <button class="delete" onclick="del(${i})">Delete</button>
@@ -272,11 +232,16 @@ function del(i){
 
 // export PDF
 function exportPDF(){
-  const doc=new jsPDF();
+  if(scans.length === 0){
+    alert("No scans");
+    return;
+  }
+
+  const doc = new jsPDF();
 
   scans.forEach((s,i)=>{
-    if(i>0) doc.addPage();
-    doc.addImage(s,"JPEG",10,10,190,260);
+    if(i !== 0) doc.addPage();
+    doc.addImage(s, "JPEG", 10, 10, 190, 260);
   });
 
   doc.save("scan.pdf");
@@ -284,4 +249,4 @@ function exportPDF(){
 </script>
 
 </body>
-  </html>
+</html>
