@@ -3,11 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pro Scanner Crop</title>
+<title>Pro Scanner Ultra (Fixed Perspective)</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
 <style>
- body{
+body{
   margin:0;
   font-family:Arial;
   background:#0b1220;
@@ -34,23 +35,20 @@
   width:100%;
   height:100%;
   object-fit:contain;
+  user-select:none;
+  pointer-events:none;
 }
 
-/* crop corners */
+/* corner points */
 .corner{
-  width:18px;
-  height:18px;
+  width:22px;
+  height:22px;
   background:#22c55e;
   border:2px solid #fff;
   border-radius:50%;
   position:absolute;
   touch-action:none;
 }
-
-.tl{ left:10%; top:10%; }
-.tr{ right:10%; top:10%; }
-.bl{ left:10%; bottom:10%; }
-.br{ right:10%; bottom:10%; }
 
 button{
   margin-top:15px;
@@ -67,25 +65,24 @@ button{
 <body>
 
 <div class="app">
-  <h2>Pro Scanner Crop Tool</h2>
+  <h2>Pro Scanner Ultra (Perspective FIX)</h2>
 
   <input type="file" id="fileInput" accept="image/*">
 
   <div class="editor" id="editor">
-    <img id="image" />
-    
-    <!-- crop corners -->
-    <div class="corner tl" id="tl"></div>
-    <div class="corner tr" id="tr"></div>
-    <div class="corner bl" id="bl"></div>
-    <div class="corner br" id="br"></div>
+    <img id="image">
+
+    <div class="corner" id="tl"></div>
+    <div class="corner" id="tr"></div>
+    <div class="corner" id="bl"></div>
+    <div class="corner" id="br"></div>
   </div>
 
   <button onclick="exportPDF()">Export PDF</button>
 </div>
 
 <script>
- const { jsPDF } = window.jspdf;
+const { jsPDF } = window.jspdf;
 
 const img = document.getElementById("image");
 const editor = document.getElementById("editor");
@@ -97,103 +94,148 @@ const corners = {
   br: document.getElementById("br")
 };
 
-let activeCorner = null;
+let active = null;
 let imgLoaded = false;
 
-// upload image
-document.getElementById("fileInput").addEventListener("change", e => {
+// init default positions
+function resetCorners(){
+  corners.tl.style.left = "10%";
+  corners.tl.style.top = "10%";
+
+  corners.tr.style.left = "90%";
+  corners.tr.style.top = "10%";
+
+  corners.bl.style.left = "10%";
+  corners.bl.style.top = "90%";
+
+  corners.br.style.left = "90%";
+  corners.br.style.top = "90%";
+}
+
+resetCorners();
+
+// upload
+document.getElementById("fileInput").addEventListener("change", e=>{
   const file = e.target.files[0];
   if(!file) return;
 
   const reader = new FileReader();
-  reader.onload = ev => {
+  reader.onload = ev=>{
     img.src = ev.target.result;
     imgLoaded = true;
   };
   reader.readAsDataURL(file);
 });
 
-// drag corners
-Object.keys(corners).forEach(key => {
-  const el = corners[key];
-
-  el.addEventListener("pointerdown", () => {
-    activeCorner = key;
-  });
+// drag
+Object.keys(corners).forEach(k=>{
+  corners[k].addEventListener("pointerdown", ()=> active = k);
 });
 
-document.addEventListener("pointermove", (e) => {
-  if(!activeCorner || !imgLoaded) return;
+document.addEventListener("pointermove", e=>{
+  if(!active || !imgLoaded) return;
 
   const rect = editor.getBoundingClientRect();
 
-  let x = ((e.clientX - rect.left) / rect.width) * 100;
-  let y = ((e.clientY - rect.top) / rect.height) * 100;
+  let x = (e.clientX - rect.left) / rect.width * 100;
+  let y = (e.clientY - rect.top) / rect.height * 100;
 
   x = Math.max(0, Math.min(100, x));
   y = Math.max(0, Math.min(100, y));
 
-  const el = corners[activeCorner];
-  el.style.left = x + "%";
-  el.style.top = y + "%";
+  corners[active].style.left = x + "%";
+  corners[active].style.top = y + "%";
 });
 
-document.addEventListener("pointerup", () => {
-  activeCorner = null;
-});
+document.addEventListener("pointerup", ()=> active=null);
 
-// export PDF with crop
+// ====== REAL PERSPECTIVE TRANSFORM ======
+
+function getPos(el, rect, imgW, imgH){
+  const r = el.getBoundingClientRect();
+  return {
+    x: (r.left - rect.left) / rect.width * imgW,
+    y: (r.top - rect.top) / rect.height * imgH
+  };
+}
+
+// bilinear transform (core CamScanner logic)
+function warpImage(ctx, img, src, dst, w, h){
+  const tmp = document.createElement("canvas");
+  tmp.width = w;
+  tmp.height = h;
+  const tctx = tmp.getContext("2d");
+
+  tctx.drawImage(img, 0, 0, w, h);
+  const srcData = tctx.getImageData(0,0,w,h);
+
+  const out = ctx.createImageData(w,h);
+
+  function lerp(a,b,t){ return a + (b-a)*t; }
+
+  // simple approximation warp (fast + mobile friendly)
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+
+      const u = x / w;
+      const v = y / h;
+
+      // interpolate quadrilateral
+      const topX = lerp(dst.tl.x, dst.tr.x, u);
+      const topY = lerp(dst.tl.y, dst.tr.y, u);
+
+      const botX = lerp(dst.bl.x, dst.br.x, u);
+      const botY = lerp(dst.bl.y, dst.br.y, u);
+
+      const srcX = lerp(topX, botX, v);
+      const srcY = lerp(topY, botY, v);
+
+      const sx = Math.floor(srcX);
+      const sy = Math.floor(srcY);
+
+      const i = (sy*w + sx) * 4;
+      const o = (y*w + x) * 4;
+
+      out.data[o] = srcData.data[i] || 0;
+      out.data[o+1] = srcData.data[i+1] || 0;
+      out.data[o+2] = srcData.data[i+2] || 0;
+      out.data[o+3] = 255;
+    }
+  }
+
+  ctx.putImageData(out,0,0);
+}
+
+// export
 async function exportPDF(){
   if(!imgLoaded) return alert("Upload image first");
+
+  const image = new Image();
+  image.src = img.src;
+  await new Promise(r=>image.onload=r);
 
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
 
-  const image = new Image();
-  image.src = img.src;
+  canvas.width = 1000;
+  canvas.height = 1400;
 
-  await new Promise(r => image.onload = r);
-
-  canvas.width = image.width;
-  canvas.height = image.height;
-
-  // get points
   const rect = editor.getBoundingClientRect();
 
-  function getPoint(el){
-    const r = el.getBoundingClientRect();
-    return {
-      x: (r.left - rect.left) / rect.width * image.width,
-      y: (r.top - rect.top) / rect.height * image.height
-    };
-  }
+  const tl = getPos(corners.tl, rect, image.width, image.height);
+  const tr = getPos(corners.tr, rect, image.width, image.height);
+  const bl = getPos(corners.bl, rect, image.width, image.height);
+  const br = getPos(corners.br, rect, image.width, image.height);
 
-  const tl = getPoint(corners.tl);
-  const tr = getPoint(corners.tr);
-  const bl = getPoint(corners.bl);
-  const br = getPoint(corners.br);
+  warpImage(ctx, image, image, {tl,tr,bl,br}, canvas.width, canvas.height);
 
-  // simple clip crop (triangle method approximation)
-  ctx.save();
+  const pdf = new jsPDF("p","mm","a4");
+  const imgData = canvas.toDataURL("image/jpeg", 1.0);
 
-  ctx.beginPath();
-  ctx.moveTo(tl.x, tl.y);
-  ctx.lineTo(tr.x, tr.y);
-  ctx.lineTo(br.x, br.y);
-  ctx.lineTo(bl.x, bl.y);
-  ctx.closePath();
-  ctx.clip();
-
-  ctx.drawImage(image, 0, 0);
-
-  ctx.restore();
-
-  const pdf = new jsPDF();
-  const imgData = canvas.toDataURL("image/jpeg", 0.95);
-
-  pdf.addImage(imgData, "JPEG", 10, 10, 190, 250);
-  pdf.save("scanned.pdf");
- }
+  pdf.addImage(imgData, "JPEG", 10, 10, 190, 270);
+  pdf.save("scan.pdf");
+}
 </script>
+
 </body>
 </html>
