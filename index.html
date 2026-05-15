@@ -6,19 +6,35 @@
 
 <style>
 body{margin:0;font-family:Arial;background:#0b1220;color:white}
-#editor{position:relative;height:60vh;background:black}
+#editor{position:relative;height:60vh;background:black;overflow:hidden}
 #img{width:100%;height:100%;object-fit:contain}
-.corner{position:absolute;width:20px;height:20px;background:#22c55e;border-radius:50%;transform:translate(-50%,-50%);touch-action:none}
-.controls{position:fixed;bottom:0;left:0;right:0;background:#0f172a;padding:10px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+
+.corner{
+position:absolute;width:18px;height:18px;
+background:#22c55e;border-radius:50%;
+transform:translate(-50%,-50%);
+touch-action:none;
+}
+
+.controls{
+position:fixed;bottom:0;left:0;right:0;
+background:#0f172a;padding:10px;
+display:flex;gap:6px;justify-content:center;flex-wrap:wrap
+}
+
 button{padding:10px;border:none;border-radius:8px;background:#2563eb;color:white}
 button.secondary{background:#374151}
-#pages{display:flex;overflow-x:auto;gap:8px;padding:10px;margin-bottom:110px}
+
+#pages{
+display:flex;overflow-x:auto;gap:8px;
+padding:10px;margin-bottom:110px;
+}
+
 .thumb{width:60px;height:80px;object-fit:cover;border:2px solid #334155}
 .thumb.active{border-color:#22c55e}
-.mode{opacity:.7}
-.mode.active{opacity:1;outline:2px solid #22c55e}
 </style>
 </head>
+
 <body>
 
 <div id="editor">
@@ -37,9 +53,9 @@ button.secondary{background:#374151}
 <button onclick="applyCrop()">Crop</button>
 <button onclick="exportPDF()">PDF</button>
 
-<button class="secondary mode active" id="mColor" onclick="setMode('color')">Color</button>
-<button class="secondary mode" id="mGray" onclick="setMode('gray')">Gray</button>
-<button class="secondary mode" id="mBW" onclick="setMode('bw')">B/W</button>
+<button class="secondary" id="mColor" onclick="setMode('color')">Color</button>
+<button class="secondary" id="mGray" onclick="setMode('gray')">Gray</button>
+<button class="secondary" id="mBW" onclick="setMode('bw')">B/W</button>
 </div>
 
 <div id="pages"></div>
@@ -47,73 +63,90 @@ button.secondary{background:#374151}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <script>
-let pages=[];
-let current=0;
-let img=document.getElementById('img');
-let editor=document.getElementById('editor');
-let file=document.getElementById('file');
-let mode='color'; // color | gray | bw
+let pages = [];
+let current = 0;
+let mode = 'color';
+let dragIndex = null;
 
-let corners=[
+const img = document.getElementById('img');
+const editor = document.getElementById('editor');
+const file = document.getElementById('file');
+
+let corners = [
 {x:40,y:60,id:'c1'},
 {x:300,y:60,id:'c2'},
 {x:300,y:400,id:'c3'},
 {x:40,y:400,id:'c4'}
 ];
 
-// LOAD FILES
 file.onchange = (e)=>{
 [...e.target.files].forEach(f=>{
-let r=new FileReader();
-r.onload=()=>{
+let r = new FileReader();
+r.onload = ()=>{
 pages.push(r.result);
-current=pages.length-1;
-show();render();
+current = pages.length-1;
+render();
+show();
 };
 r.readAsDataURL(f);
 });
+};
+
+function show(){
+if(!pages.length) return;
+img.src = pages[current];
+updateCorners();
 }
 
-function show(){img.src=pages[current];updateCorners()}
-
 function render(){
-let p=document.getElementById('pages');p.innerHTML='';
+const p = document.getElementById('pages');
+p.innerHTML='';
+
 pages.forEach((src,i)=>{
-let im=document.createElement('img');
-im.src=src;
-im.className='thumb'+(i===current?' active':'');
-im.onclick=()=>{current=i;show()};
+let im = document.createElement('img');
+im.src = src;
+im.className = 'thumb' + (i===current?' active':'');
+im.onclick = ()=>{ current=i; show(); };
+im.draggable = true;
 p.appendChild(im);
 });
 }
 
-// MODE
+/* MODE */
 function setMode(m){
 mode=m;
-['mColor','mGray','mBW'].forEach(id=>document.getElementById(id).classList.remove('active'));
-if(m==='color') document.getElementById('mColor').classList.add('active');
-if(m==='gray') document.getElementById('mGray').classList.add('active');
-if(m==='bw') document.getElementById('mBW').classList.add('active');
+['mColor','mGray','mBW'].forEach(id=>{
+document.getElementById(id).style.outline='none';
+});
+document.getElementById('m'+m.charAt(0).toUpperCase()+m.slice(1)).style.outline='2px solid #22c55e';
 }
 
-// DRAG CORNERS
+/* CORNERS */
 corners.forEach(c=>{
-let el=document.getElementById(c.id);
-let drag=false;
+const el = document.getElementById(c.id);
+let dragging=false;
 
-el.onmousedown=el.ontouchstart=()=>drag=true;
-window.addEventListener('mouseup',()=>drag=false);
-window.addEventListener('touchend',()=>drag=false);
+const move=(e)=>{
+if(!dragging) return;
+
+let r = editor.getBoundingClientRect();
+let x = (e.touches?e.touches[0].clientX:e.clientX)-r.left;
+let y = (e.touches?e.touches[0].clientY:e.clientY)-r.top;
+
+c.x = Math.max(0,Math.min(r.width,x));
+c.y = Math.max(0,Math.min(r.height,y));
+
+updateCorners();
+};
+
+el.addEventListener('mousedown',()=>dragging=true);
+el.addEventListener('touchstart',()=>dragging=true);
+
+window.addEventListener('mouseup',()=>dragging=false);
+window.addEventListener('touchend',()=>dragging=false);
+
 window.addEventListener('mousemove',move);
 window.addEventListener('touchmove',move);
-
-function move(e){
-if(!drag)return;
-let r=editor.getBoundingClientRect();
-c.x=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
-c.y=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
-updateCorners();
-}
 });
 
 function updateCorners(){
@@ -124,7 +157,7 @@ el.style.top=c.y+'px';
 });
 }
 
-// ROTATE
+/* ROTATE */
 function rotatePage(){
 let image=new Image();
 image.src=pages[current];
@@ -136,40 +169,37 @@ c.height=image.width;
 ctx.translate(c.width/2,c.height/2);
 ctx.rotate(Math.PI/2);
 ctx.drawImage(image,-image.width/2,-image.height/2);
-pages[current]=c.toDataURL();
+pages[current]=c.toDataURL('image/jpeg',1);
 show();render();
 };
 }
 
-// ENHANCEMENT MODES
+/* MODE FILTER */
 function applyMode(canvas){
-if(mode==='color') return; // keep original
+if(mode==='color') return;
 
 let ctx=canvas.getContext('2d');
-let imgData=ctx.getImageData(0,0,canvas.width,canvas.height);
-let d=imgData.data;
+let d = ctx.getImageData(0,0,canvas.width,canvas.height);
+let data = d.data;
 
-for(let i=0;i<d.length;i+=4){
-let r=d[i], g=d[i+1], b=d[i+2];
+for(let i=0;i<data.length;i+=4){
+let r=data[i],g=data[i+1],b=data[i+2];
 let gray=0.3*r+0.59*g+0.11*b;
 
 if(mode==='gray'){
-// clean grayscale with mild contrast
 let v=(gray-128)*1.2+128;
-d[i]=d[i+1]=d[i+2]=v;
+data[i]=data[i+1]=data[i+2]=v;
 }
 
 if(mode==='bw'){
-// high-contrast document (threshold)
-let v=(gray-128)*1.6+128;
-v = v>150 ? 255 : 0;
-d[i]=d[i+1]=d[i+2]=v;
+let v = gray>140?255:0;
+data[i]=data[i+1]=data[i+2]=v;
 }
 }
-ctx.putImageData(imgData,0,0);
+ctx.putImageData(d,0,0);
 }
 
-// FAST WARP
+/* CROPPING */
 function applyCrop(){
 let image=new Image();
 image.src=pages[current];
@@ -177,38 +207,42 @@ image.src=pages[current];
 image.onload=()=>{
 let canvas=document.createElement('canvas');
 let ctx=canvas.getContext('2d');
-let w=1200,h=1600;
-canvas.width=w;canvas.height=h;
+
+canvas.width=1200;
+canvas.height=1600;
 
 let rect=editor.getBoundingClientRect();
-let scaleX=image.width/rect.width;
-let scaleY=image.height/rect.height;
+let sx=image.width/rect.width;
+let sy=image.height/rect.height;
 
-let p=corners.map(pt=>({x:pt.x*scaleX,y:pt.y*scaleY}));
+let p=corners.map(pt=>({x:pt.x*sx,y:pt.y*sy}));
 
-function drawTri(sx0,sy0,sx1,sy1,sx2,sy2,dx0,dy0,dx1,dy1,dx2,dy2){
+function tri(sx0,sy0,sx1,sy1,sx2,sy2,dx0,dy0,dx1,dy1,dx2,dy2){
 ctx.save();
 ctx.beginPath();
-ctx.moveTo(dx0,dy0);ctx.lineTo(dx1,dy1);ctx.lineTo(dx2,dy2);
-ctx.closePath();ctx.clip();
+ctx.moveTo(dx0,dy0);
+ctx.lineTo(dx1,dy1);
+ctx.lineTo(dx2,dy2);
+ctx.closePath();
+ctx.clip();
 
 let denom = (sx0*(sy1-sy2)+sx1*(sy2-sy0)+sx2*(sy0-sy1));
 
-let m11 = (dx0*(sy1-sy2)+dx1*(sy2-sy0)+dx2*(sy0-sy1)) / denom;
-let m12 = (dx0*(sx2-sx1)+dx1*(sx0-sx2)+dx2*(sx1-sx0)) / denom;
-let m21 = (dy0*(sy1-sy2)+dy1*(sy2-sy0)+dy2*(sy0-sy1)) / denom;
-let m22 = (dy0*(sx2-sx1)+dy1*(sx0-sx2)+dy2*(sx1-sx0)) / denom;
-let dx = (dx0*(sx1*sy2-sx2*sy1)+dx1*(sx2*sy0-sx0*sy2)+dx2*(sx0*sy1-sx1*sy0)) / denom;
-let dy = (dy0*(sx1*sy2-sx2*sy1)+dy1*(sx2*sy0-sx0*sy2)+dy2*(sx0*sy1-sx1*sy0)) / denom;
+let m11 = (dx0*(sy1-sy2)+dx1*(sy2-sy0)+dx2*(sy0-sy1))/denom;
+let m12 = (dx0*(sx2-sx1)+dx1*(sx0-sx2)+dx2*(sx1-sx0))/denom;
+let m21 = (dy0*(sy1-sy2)+dy1*(sy2-sy0)+dy2*(sy0-sy1))/denom;
+let m22 = (dy0*(sx2-sx1)+dy1*(sx0-sx2)+dy2*(sx1-sx0))/denom;
+
+let dx = (dx0*(sx1*sy2-sx2*sy1)+dx1*(sx2*sy0-sx0*sy2)+dx2*(sx0*sy1-sx1*sy0))/denom;
+let dy = (dy0*(sx1*sy2-sx2*sy1)+dy1*(sx2*sy0-sx0*sy2)+dy2*(sx0*sy1-sx1*sy0))/denom;
 
 ctx.transform(m11,m21,m12,m22,dx,dy);
 ctx.drawImage(image,0,0);
 ctx.restore();
 }
 
-// split quad
-drawTri(p[0].x,p[0].y,p[1].x,p[1].y,p[2].x,p[2].y,0,0,w,0,w,h);
-drawTri(p[0].x,p[0].y,p[2].x,p[2].y,p[3].x,p[3].y,0,0,w,h,0,h);
+tri(p[0].x,p[0].y,p[1].x,p[1].y,p[2].x,p[2].y,0,0,1200,0,1200,1600);
+tri(p[0].x,p[0].y,p[2].x,p[2].y,p[3].x,p[3].y,0,0,1200,1600,0,1600);
 
 applyMode(canvas);
 
@@ -217,85 +251,50 @@ show();render();
 };
 }
 
-// TOUCH REORDER (MOBILE FRIENDLY)
-let touchIndex = null;
-let pagesContainer = document.getElementById('pages');
-
-pagesContainer.addEventListener('touchstart', (e) => {
-  let target = e.target.closest('img');
-  if(!target) return;
-  touchIndex = [...pagesContainer.children].indexOf(target);
-  target.style.opacity = 0.5;
+/* TOUCH REORDER */
+document.getElementById('pages').addEventListener('touchstart',(e)=>{
+let t=e.target.closest('img');
+if(!t) return;
+dragIndex=[...t.parentNode.children].indexOf(t);
+t.style.opacity=0.5;
 });
 
-pagesContainer.addEventListener('touchmove', (e) => {
-  e.preventDefault();
-  let touch = e.touches[0];
-  let target = document.elementFromPoint(touch.clientX, touch.clientY);
-  let over = target?.closest('img');
+document.getElementById('pages').addEventListener('touchmove',(e)=>{
+e.preventDefault();
+let touch=e.touches[0];
+let el=document.elementFromPoint(touch.clientX,touch.clientY);
+let over=el?.closest('img');
 
-  if(!over || touchIndex === null) return;
+if(!over || dragIndex===null) return;
 
-  let overIndex = [...pagesContainer.children].indexOf(over);
+let overIndex=[...over.parentNode.children].indexOf(over);
 
-  if(overIndex !== touchIndex){
-    let moved = pages.splice(touchIndex,1)[0];
-    pages.splice(overIndex,0,moved);
-    touchIndex = overIndex;
-    render();
-  }
-});
-
-pagesContainer.addEventListener('touchend', () => {
-  touchIndex = null;
-  render();
-});
-
-// DESKTOP DRAG (fallback)
-pagesContainer.addEventListener('dragstart',e=>{
-  dragIndex = [...e.target.parentNode.children].indexOf(e.target);
-});
-
-pagesContainer.addEventListener('dragover',e=>{e.preventDefault();});
-
-pagesContainer.addEventListener('drop',e=>{
-  e.preventDefault();
-  let target = e.target.closest('img');
-  if(!target) return;
-  let dropIndex = [...target.parentNode.children].indexOf(target);
-
-  let moved = pages.splice(dragIndex,1)[0];
-  pages.splice(dropIndex,0,moved);
-
-  current = dropIndex;
-  render();
-  show();
-});
-
-// UPDATE render to allow drag
-function render(){
-let p=document.getElementById('pages');p.innerHTML='';
-pages.forEach((src,i)=>{
-let im=document.createElement('img');
-im.src=src;
-im.draggable=true;
-im.className='thumb'+(i===current?' active':'');
-im.onclick=()=>{current=i;show()};
-p.appendChild(im);
-});
+if(overIndex!==dragIndex){
+let moved=pages.splice(dragIndex,1)[0];
+pages.splice(overIndex,0,moved);
+dragIndex=overIndex;
+render();
 }
+});
 
-// PDF
+document.getElementById('pages').addEventListener('touchend',()=>{
+dragIndex=null;
+render();
+});
+
+/* PDF */
 function exportPDF(){
 const {jsPDF}=window.jspdf;
-let pdf=new jsPDF('p','pt','a4');
+let pdf=new jsPDF();
+
 pages.forEach((img,i)=>{
-pdf.addImage(img,'JPEG',0,0,595,842);
-if(i<pages.length-1)pdf.addPage();
+pdf.addImage(img,'JPEG',10,10,190,270);
+if(i<pages.length-1) pdf.addPage();
 });
+
 pdf.save('scan.pdf');
 }
-
 </script>
+
 </body>
-</html>
+  </html>
