@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Scanner Pro Crop + Straighten</title>
+<title>Pro Scanner - Perspective Crop</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
@@ -47,35 +47,20 @@ button{
   overflow:hidden;
 }
 
-#preview{
+#img{
   width:100%;
   display:block;
 }
 
-.crop-box{
-  position:absolute;
-  border:2px dashed #00ff99;
-  top:50px;
-  left:50px;
-  width:200px;
-  height:200px;
-  cursor:move;
-}
-
-.handle{
-  width:12px;
-  height:12px;
+.point{
+  width:16px;
+  height:16px;
   background:#00ff99;
+  border-radius:50%;
   position:absolute;
-}
-
-.h-tl{top:-6px; left:-6px; cursor:nwse-resize;}
-.h-tr{top:-6px; right:-6px; cursor:nesw-resize;}
-.h-bl{bottom:-6px; left:-6px; cursor:nesw-resize;}
-.h-br{bottom:-6px; right:-6px; cursor:nwse-resize;}
-
-.controls{
-  margin-top:10px;
+  transform:translate(-50%,-50%);
+  cursor:pointer;
+  border:2px solid #000;
 }
 
 .list .card{
@@ -87,8 +72,8 @@ button{
 
 .card img{
   width:100%;
-  margin-top:8px;
   border-radius:8px;
+  margin-top:8px;
 }
 
 .delete{
@@ -101,27 +86,22 @@ button{
 <body>
 
 <div class="container">
-<h1>Scanner Pro (Crop + Straighten)</h1>
+<h1>Scanner Pro (4-Corner Perspective)</h1>
 
 <input type="file" id="file" accept="image/*">
 
 <div class="editor" id="editor" style="display:none;">
-  <img id="preview">
-  <div class="crop-box" id="cropBox">
-    <div class="handle h-tl"></div>
-    <div class="handle h-tr"></div>
-    <div class="handle h-bl"></div>
-    <div class="handle h-br"></div>
-  </div>
+  <img id="img">
+
+  <div class="point" id="p1"></div>
+  <div class="point" id="p2"></div>
+  <div class="point" id="p3"></div>
+  <div class="point" id="p4"></div>
 </div>
 
-<div class="controls">
-  <label>Rotate (Straighten)</label>
-  <input type="range" id="rotate" min="-45" max="45" value="0">
-  <button onclick="applyScan()">Add Scan</button>
-</div>
+<button onclick="addScan()">Add Scan</button>
 
-<div class="list" id="list"></div>
+<div id="list"></div>
 
 <button onclick="exportPDF()">Export PDF</button>
 </div>
@@ -129,114 +109,141 @@ button{
 <script>
 const { jsPDF } = window.jspdf;
 
-let scans = [];
 let img = new Image();
+let scans = [];
 
-const fileInput = document.getElementById('file');
-const preview = document.getElementById('preview');
 const editor = document.getElementById('editor');
-const cropBox = document.getElementById('cropBox');
-const rotateSlider = document.getElementById('rotate');
+const imageEl = document.getElementById('img');
+
+const points = [
+  document.getElementById('p1'),
+  document.getElementById('p2'),
+  document.getElementById('p3'),
+  document.getElementById('p4')
+];
+
+let dragging = null;
 
 // load image
-fileInput.addEventListener('change', e=>{
+document.getElementById('file').addEventListener('change', e=>{
   const file = e.target.files[0];
   if(!file) return;
 
   const reader = new FileReader();
   reader.onload = ev=>{
     img.src = ev.target.result;
-    preview.src = ev.target.result;
+    imageEl.src = ev.target.result;
     editor.style.display = 'block';
   };
   reader.readAsDataURL(file);
 });
 
-// rotate preview
-rotateSlider.addEventListener('input', ()=>{
-  preview.style.transform = `rotate(${rotateSlider.value}deg)`;
-});
+// init points after image load
+img.onload = ()=>{
+  const rect = editor.getBoundingClientRect();
 
-// simple drag crop box
-let isDragging = false;
-let offsetX, offsetY;
+  points[0].style.left = "50px";
+  points[0].style.top = "50px";
 
-cropBox.addEventListener('mousedown', e=>{
-  isDragging = true;
-  offsetX = e.offsetX;
-  offsetY = e.offsetY;
+  points[1].style.left = (rect.width-50) + "px";
+  points[1].style.top = "50px";
+
+  points[2].style.left = (rect.width-50) + "px";
+  points[2].style.top = (rect.height-50) + "px";
+
+  points[3].style.left = "50px";
+  points[3].style.top = (rect.height-50) + "px";
+};
+
+// drag points
+points.forEach(p=>{
+  p.addEventListener('mousedown', ()=> dragging = p);
 });
 
 document.addEventListener('mousemove', e=>{
-  if(!isDragging) return;
+  if(!dragging) return;
 
   const rect = editor.getBoundingClientRect();
-  cropBox.style.left = (e.clientX - rect.left - offsetX) + 'px';
-  cropBox.style.top = (e.clientY - rect.top - offsetY) + 'px';
+
+  dragging.style.left = (e.clientX - rect.left) + "px";
+  dragging.style.top = (e.clientY - rect.top) + "px";
 });
 
-document.addEventListener('mouseup', ()=> isDragging=false);
+document.addEventListener('mouseup', ()=> dragging=null);
 
-// crop function
-function getCroppedCanvas(){
+// perspective transform (simple approximation using canvas sampling)
+function warpImage(src, pts, width, height){
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
 
-  const rect = cropBox.getBoundingClientRect();
-  const imgRect = preview.getBoundingClientRect();
+  canvas.width = width;
+  canvas.height = height;
 
-  const scaleX = img.width / imgRect.width;
-  const scaleY = img.height / imgRect.height;
+  const temp = new Image();
+  temp.src = src;
 
-  const x = (rect.left - imgRect.left) * scaleX;
-  const y = (rect.top - imgRect.top) * scaleY;
-  const w = rect.width * scaleX;
-  const h = rect.height * scaleY;
+  return new Promise(resolve=>{
+    temp.onload = ()=>{
 
-  canvas.width = w;
-  canvas.height = h;
+      // brute-force grid warp (simple CamScanner-like approximation)
+      const divisions = 200;
 
-  ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
+      const [p1,p2,p3,p4] = pts;
 
-  return canvas.toDataURL('image/jpeg', 0.9);
+      for(let i=0;i<divisions;i++){
+        for(let j=0;j<divisions;j++){
+
+          const u = i/divisions;
+          const v = j/divisions;
+
+          // bilinear interpolation (fake perspective warp)
+          const xTop = p1.x + (p2.x - p1.x)*u;
+          const yTop = p1.y + (p2.y - p1.y)*u;
+
+          const xBottom = p4.x + (p3.x - p4.x)*u;
+          const yBottom = p4.y + (p3.y - p4.y)*u;
+
+          const x = xTop + (xBottom - xTop)*v;
+          const y = yTop + (yBottom - yTop)*v;
+
+          const sx = (x / editor.clientWidth) * temp.width;
+          const sy = (y / editor.clientHeight) * temp.height;
+
+          const dx = u * width;
+          const dy = v * height;
+
+          ctx.drawImage(temp, sx, sy, 2, 2, dx, dy, 2, 2);
+        }
+      }
+
+      resolve(canvas.toDataURL("image/jpeg",0.95));
+    };
+  });
+}
+
+// get points
+function getPoints(){
+  return points.map(p=>{
+    const rect = editor.getBoundingClientRect();
+    return {
+      x: parseFloat(p.style.left) / rect.width * editor.clientWidth,
+      y: parseFloat(p.style.top) / rect.height * editor.clientHeight
+    };
+  });
 }
 
 // add scan
-function applyScan(){
-  const cropped = getCroppedCanvas();
+async function addScan(){
+  const warped = await warpImage(img.src, getPoints(), 1000, 1400);
 
-  // apply rotation (simple)
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
+  scans.push(warped);
+  render();
 
-  const temp = new Image();
-  temp.src = cropped;
-
-  temp.onload = ()=>{
-    const angle = rotateSlider.value * Math.PI/180;
-
-    const w = temp.width;
-    const h = temp.height;
-
-    canvas.width = w;
-    canvas.height = h;
-
-    ctx.translate(w/2, h/2);
-    ctx.rotate(angle);
-    ctx.drawImage(temp, -w/2, -h/2);
-
-    const finalImg = canvas.toDataURL('image/jpeg', 0.9);
-
-    scans.push(finalImg);
-    render();
-
-    editor.style.display = 'none';
-    fileInput.value = '';
-    rotateSlider.value = 0;
-  };
+  editor.style.display = 'none';
+  document.getElementById('file').value = '';
 }
 
-// render list
+// render
 function render(){
   const list = document.getElementById('list');
   list.innerHTML = '';
@@ -263,20 +270,14 @@ function deleteScan(i){
 
 // export PDF
 function exportPDF(){
-  if(scans.length === 0){
-    alert("No scans");
-    return;
-  }
-
   const doc = new jsPDF();
 
   scans.forEach((s,i)=>{
-    if(i !== 0) doc.addPage();
-
-    doc.addImage(s, 'JPEG', 10, 10, 190, 260);
+    if(i!==0) doc.addPage();
+    doc.addImage(s,'JPEG',10,10,190,260);
   });
 
-  doc.save("scanned.pdf");
+  doc.save("scan.pdf");
 }
 </script>
 
