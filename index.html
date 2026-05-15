@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Scanner Pro</title>
+<title>Scanner Pro FIX</title>
 
 <style>
 body{margin:0;font-family:Arial;background:#0b1220;color:white}
@@ -102,6 +102,7 @@ let file = document.getElementById('file');
 
 let activeCorner = null;
 
+// IMPORTANT: keep same object references (DO NOT reassign array items)
 let corners = [
 {x:50,y:50,id:'c1'},
 {x:300,y:50,id:'c2'},
@@ -110,7 +111,7 @@ let corners = [
 ];
 
 // =====================
-// LOAD IMAGES
+// LOAD
 // =====================
 file.onchange = (e)=>{
 [...e.target.files].forEach(f=>{
@@ -128,14 +129,16 @@ r.readAsDataURL(f);
 function show(){
 img.src = pages[current];
 img.onload = ()=>{
+setTimeout(()=>{
 resetCorners();
 updateCorners();
+},50);
 };
 }
 
 function render(){
 let p = document.getElementById('pages');
-p.innerHTML = '';
+p.innerHTML='';
 
 pages.forEach((src,i)=>{
 let im = document.createElement('img');
@@ -147,7 +150,7 @@ p.appendChild(im);
 }
 
 // =====================
-// CORNERS FIXED DRAG
+// DRAG CORNERS FIXED
 // =====================
 corners.forEach(c=>{
 let el = document.getElementById(c.id);
@@ -162,14 +165,8 @@ if(activeCorner !== c) return;
 
 let r = editor.getBoundingClientRect();
 
-let x = e.clientX - r.left;
-let y = e.clientY - r.top;
-
-x = Math.max(0,Math.min(r.width,x));
-y = Math.max(0,Math.min(r.height,y));
-
-c.x = x;
-c.y = y;
+c.x = Math.max(0,Math.min(r.width, e.clientX - r.left));
+c.y = Math.max(0,Math.min(r.height, e.clientY - r.top));
 
 updateCorners();
 });
@@ -187,16 +184,16 @@ el.style.top = c.y + 'px';
 });
 }
 
-// reset corners per image
+// =====================
+// FIXED RESET (NO REASSIGNMENT BUG)
+// =====================
 function resetCorners(){
 let r = editor.getBoundingClientRect();
 
-corners[0]={x:50,y:50,id:'c1'};
-corners[1]={x:r.width-50,y:50,id:'c2'};
-corners[2]={x:r.width-50,y:r.height-50,id:'c3'};
-corners[3]={x:50,y:r.height-50,id:'c4'};
-
-updateCorners();
+corners[0].x = 40; corners[0].y = 40;
+corners[1].x = r.width - 40; corners[1].y = 40;
+corners[2].x = r.width - 40; corners[2].y = r.height - 40;
+corners[3].x = 40; corners[3].y = r.height - 40;
 }
 
 // =====================
@@ -217,14 +214,13 @@ ctx.translate(c.width/2,c.height/2);
 ctx.rotate(Math.PI/2);
 ctx.drawImage(image,-image.width/2,-image.height/2);
 
-pages[current] = c.toDataURL('image/jpeg',1);
-show();
-render();
+pages[current] = c.toDataURL('image/jpeg',0.95);
+show(); render();
 };
 }
 
 // =====================
-// CROP (FIXED SIMPLE HOMOGRAPHY)
+// CROPPING (IMPROVED)
 // =====================
 function applyCrop(){
 
@@ -233,12 +229,12 @@ image.src = pages[current];
 
 image.onload = ()=>{
 
+let W = 1200, H = 1600;
 let canvas = document.createElement('canvas');
 let ctx = canvas.getContext('2d');
 
-let W = 1200, Hh = 1600;
 canvas.width = W;
-canvas.height = Hh;
+canvas.height = H;
 
 let rect = editor.getBoundingClientRect();
 
@@ -250,15 +246,6 @@ x:p.x * sx,
 y:p.y * sy
 }));
 
-// destination rectangle
-let dst = [
-{x:0,y:0},
-{x:W,y:0},
-{x:W,y:Hh},
-{x:0,y:Hh}
-];
-
-// simple bilinear warp (stable fallback)
 let temp = document.createElement('canvas');
 temp.width = image.width;
 temp.height = image.height;
@@ -268,43 +255,59 @@ tctx.drawImage(image,0,0);
 
 let srcData = tctx.getImageData(0,0,image.width,image.height).data;
 
-let out = ctx.createImageData(W,Hh);
+let out = ctx.createImageData(W,H);
 
-for(let y=0;y<Hh;y++){
+// bilinear sampling (FIXED)
+function getPixel(x,y){
+let i = (y*image.width + x)*4;
+return [
+srcData[i]||0,
+srcData[i+1]||0,
+srcData[i+2]||0,
+255
+];
+}
+
+for(let y=0;y<H;y++){
 for(let x=0;x<W;x++){
 
 let u = x/W;
-let v = y/Hh;
+let v = y/H;
 
-let px = src[0].x*(1-u)*(1-v) + src[1].x*u*(1-v) + src[2].x*u*v + src[3].x*(1-u)*v;
-let py = src[0].y*(1-u)*(1-v) + src[1].y*u*(1-v) + src[2].y*u*v + src[3].y*(1-u)*v;
+let px =
+src[0].x*(1-u)*(1-v) +
+src[1].x*u*(1-v) +
+src[2].x*u*v +
+src[3].x*(1-u)*v;
 
-let ix = px|0;
-let iy = py|0;
+let py =
+src[0].y*(1-u)*(1-v) +
+src[1].y*u*(1-v) +
+src[2].y*u*v +
+src[3].y*(1-u)*v;
+
+let ix = Math.max(0,Math.min(image.width-1, px|0));
+let iy = Math.max(0,Math.min(image.height-1, py|0));
+
+let [r,g,b,a] = getPixel(ix,iy);
 
 let o = (y*W + x)*4;
-
-if(ix>=0 && iy>=0 && ix<image.width && iy<image.height){
-let i = (iy*image.width + ix)*4;
-
-out.data[o]=srcData[i];
-out.data[o+1]=srcData[i+1];
-out.data[o+2]=srcData[i+2];
-out.data[o+3]=255;
-}
+out.data[o]=r;
+out.data[o+1]=g;
+out.data[o+2]=b;
+out.data[o+3]=a;
 }
 }
 
 ctx.putImageData(out,0,0);
 
 pages[current] = canvas.toDataURL('image/jpeg',0.95);
-show();
-render();
+show(); render();
 };
 }
 
 // =====================
-// EXPORT PDF
+// PDF EXPORT
 // =====================
 function exportPDF(){
 const {jsPDF} = window.jspdf;
