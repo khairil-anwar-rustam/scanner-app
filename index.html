@@ -3,16 +3,16 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>GitHub Scanner Pro</title>
+<title>Scanner Pro v2</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <style>
 body{
 margin:0;
-font-family:Arial;
 background:#0b1220;
 color:white;
+font-family:Arial;
 text-align:center;
 }
 
@@ -22,246 +22,218 @@ background:#111a2e;
 font-weight:bold;
 }
 
-#container{
-padding:10px;
-}
-
-#canvasWrap{
-position:relative;
-display:inline-block;
-max-width:100%;
-touch-action:none;
-}
-
 canvas{
 max-width:100%;
 border-radius:10px;
-background:#000;
+touch-action:none;
+}
+
+.wrap{
+position:relative;
+display:inline-block;
+margin-top:10px;
 }
 
 .corner{
-position:absolute;
-width:18px;
-height:18px;
-background:#00ffd5;
+width:20px;
+height:20px;
 border-radius:50%;
+background:#00ffd5;
+position:absolute;
 touch-action:none;
 }
 
 button{
-margin:6px;
-padding:10px 14px;
-border:none;
+margin:5px;
+padding:10px;
 border-radius:8px;
+border:none;
 background:#1f2a44;
 color:white;
-font-weight:bold;
-}
-
-button:active{
-transform:scale(0.97);
-}
-
-input{
-margin:10px;
 }
 </style>
 </head>
 
 <body>
 
-<header>📄 GitHub Scanner Pro</header>
+<header>📄 Scanner Pro v2 (Fixed)</header>
 
-<div id="container">
+<input type="file" id="file" accept="image/*"/>
 
-<input type="file" id="file" accept="image/*">
+<div class="wrap">
+<canvas id="c"></canvas>
 
-<br>
-
-<div id="canvasWrap">
-<canvas id="canvas"></canvas>
-
-<div class="corner" id="c1"></div>
-<div class="corner" id="c2"></div>
-<div class="corner" id="c3"></div>
-<div class="corner" id="c4"></div>
-
+<div class="corner" id="p0"></div>
+<div class="corner" id="p1"></div>
+<div class="corner" id="p2"></div>
+<div class="corner" id="p3"></div>
 </div>
 
 <br>
 
+<button onclick="warpCrop()">Crop</button>
 <button onclick="rotate()">Rotate</button>
-<button onclick="enhance()">Flatten</button>
-<button onclick="crop()">Crop</button>
-<button onclick="exportPDF()">Export PDF</button>
-
-</div>
+<button onclick="downloadPDF()">PDF</button>
 
 <script>
-const canvas = document.getElementById("canvas");
+const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 let img = new Image();
 let angle = 0;
 
-let points = [
-{ x: 50, y: 50 },
-{ x: 250, y: 50 },
-{ x: 250, y: 250 },
-{ x: 50, y: 250 }
+let pts = [
+{x:40,y:40},
+{x:300,y:40},
+{x:300,y:400},
+{x:40,y:400}
 ];
 
-let activePoint = null;
+const corners = [...document.querySelectorAll(".corner")];
 
-const corners = [
-document.getElementById("c1"),
-document.getElementById("c2"),
-document.getElementById("c3"),
-document.getElementById("c4")
-];
+let drag = null;
 
-// Load image
-document.getElementById("file").onchange = function(e){
-const reader = new FileReader();
-reader.onload = function(event){
+// ---------- LOAD IMAGE ----------
+document.getElementById("file").onchange = e=>{
+const r = new FileReader();
+r.onload = ev=>{
 img = new Image();
-img.onload = function(){
+img.onload = ()=>{
 canvas.width = img.width;
 canvas.height = img.height;
-drawImage();
-resetCorners();
-}
-img.src = event.target.result;
-}
-reader.readAsDataURL(e.target.files[0]);
+draw();
+resetPts();
+};
+img.src = ev.target.result;
+};
+r.readAsDataURL(e.target.files[0]);
 };
 
-// Draw image
-function drawImage(){
+// ---------- DRAW ----------
+function draw(){
 ctx.clearRect(0,0,canvas.width,canvas.height);
+
 ctx.save();
-ctx.translate(canvas.width/2, canvas.height/2);
-ctx.rotate(angle * Math.PI/180);
-ctx.drawImage(img, -img.width/2, -img.height/2);
+ctx.translate(canvas.width/2,canvas.height/2);
+ctx.rotate(angle*Math.PI/180);
+ctx.drawImage(img,-img.width/2,-img.height/2);
 ctx.restore();
-updateCorners();
+
+updateUI();
 }
 
-// Reset corners
-function resetCorners(){
-points = [
-{ x: 50, y: 50 },
-{ x: canvas.width-50, y: 50 },
-{ x: canvas.width-50, y: canvas.height-50 },
-{ x: 50, y: canvas.height-50 }
+// ---------- CORNERS ----------
+function resetPts(){
+pts = [
+{x:50,y:50},
+{x:canvas.width-50,y:50},
+{x:canvas.width-50,y:canvas.height-50},
+{x:50,y:canvas.height-50}
 ];
-updateCorners();
+updateUI();
 }
 
-// Update UI corners
-function updateCorners(){
-points.forEach((p,i)=>{
-corners[i].style.left = p.x + "px";
-corners[i].style.top = p.y + "px";
+function updateUI(){
+pts.forEach((p,i)=>{
+corners[i].style.left = p.x+"px";
+corners[i].style.top = p.y+"px";
 });
 }
 
-// Drag logic (touch + mouse)
-corners.forEach((corner,i)=>{
-corner.onmousedown = startDrag;
-corner.ontouchstart = startDrag;
+// ---------- TOUCH DRAG ----------
+corners.forEach((c,i)=>{
+c.addEventListener("pointerdown",()=>drag=i);
 
-function startDrag(e){
-activePoint = i;
-document.onmousemove = move;
-document.ontouchmove = move;
-document.onmouseup = end;
-document.ontouchend = end;
-}
+window.addEventListener("pointermove",e=>{
+if(drag===null) return;
 
-function move(e){
-let rect = canvas.getBoundingClientRect();
-let x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
-let y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
-
-points[activePoint] = { x, y };
-updateCorners();
-}
-
-function end(){
-document.onmousemove = null;
-document.ontouchmove = null;
-}
+let r = canvas.getBoundingClientRect();
+pts[drag] = {
+x:e.clientX - r.left,
+y:e.clientY - r.top
+};
+updateUI();
+draw();
 });
 
-// Rotate image
+window.addEventListener("pointerup",()=>drag=null);
+});
+
+// ---------- ROTATE ----------
 function rotate(){
 angle += 90;
-drawImage();
+draw();
 }
 
-// Simple flatten (contrast boost)
-function enhance(){
-let imageData = ctx.getImageData(0,0,canvas.width,canvas.height);
-let data = imageData.data;
-
-for(let i=0;i<data.length;i+=4){
-data[i] = Math.min(255, data[i]*1.2);
-data[i+1] = Math.min(255, data[i+1]*1.2);
-data[i+2] = Math.min(255, data[i+2]*1.2);
-}
-
-ctx.putImageData(imageData,0,0);
-}
-
-// Perspective crop (simple warp)
-function crop(){
-let w = canvas.width;
-let h = canvas.height;
+// ---------- REAL PERSPECTIVE WARP ----------
+function warpCrop(){
 
 let temp = document.createElement("canvas");
-temp.width = w;
-temp.height = h;
-let tctx = temp.getContext("2d");
+temp.width = 600;
+temp.height = 800;
+let t = temp.getContext("2d");
 
-tctx.drawImage(canvas,0,0);
+let src = ctx.getImageData(0,0,canvas.width,canvas.height);
 
-ctx.clearRect(0,0,w,h);
+let dst = t.createImageData(temp.width,temp.height);
 
-let [p1,p2,p3,p4] = points;
-
-let steps = 50;
-
-for(let i=0;i<steps;i++){
-for(let j=0;j<steps;j++){
-
-let u = i/steps;
-let v = j/steps;
-
-let x = (1-u)*(1-v)*p1.x + u*(1-v)*p2.x + u*v*p3.x + (1-u)*v*p4.x;
-let y = (1-u)*(1-v)*p1.y + u*(1-v)*p2.y + u*v*p3.y + (1-u)*v*p4.y;
-
-let color = tctx.getImageData(x,y,1,1).data;
-
-ctx.fillStyle = `rgb(${color[0]},${color[1]},${color[2]})`;
-ctx.fillRect(i*(w/steps), j*(h/steps), w/steps, h/steps);
-}
-}
+function sample(x,y){
+let i = (Math.floor(y)*canvas.width + Math.floor(x))*4;
+return [
+src.data[i]||0,
+src.data[i+1]||0,
+src.data[i+2]||0,
+src.data[i+3]||255
+];
 }
 
-// Export PDF
-function exportPDF(){
+// bilinear warp
+for(let y=0;y<temp.height;y++){
+for(let x=0;x<temp.width;x++){
+
+let u = x/temp.width;
+let v = y/temp.height;
+
+let X =
+(1-u)*(1-v)*pts[0].x +
+u*(1-v)*pts[1].x +
+u*v*pts[2].x +
+(1-u)*v*pts[3].x;
+
+let Y =
+(1-u)*(1-v)*pts[0].y +
+u*(1-v)*pts[1].y +
+u*v*pts[2].y +
+(1-u)*v*pts[3].y;
+
+let c = sample(X,Y);
+
+let i = (y*temp.width + x)*4;
+dst.data[i]=c[0];
+dst.data[i+1]=c[1];
+dst.data[i+2]=c[2];
+dst.data[i+3]=255;
+}
+}
+
+t.putImageData(dst,0,0);
+
+// replace canvas
+canvas.width = temp.width;
+canvas.height = temp.height;
+ctx.drawImage(temp,0,0);
+}
+
+// ---------- PDF ----------
+function downloadPDF(){
 const { jsPDF } = window.jspdf;
 let pdf = new jsPDF();
 
-let imgData = canvas.toDataURL("image/jpeg",1.0);
-
-pdf.addImage(imgData,"JPEG",10,10,180,250);
+pdf.addImage(canvas.toDataURL("image/jpeg"),"JPEG",10,10,180,250);
 pdf.save("scan.pdf");
 }
 
-// init corners position after load
-setTimeout(updateCorners,500);
+draw();
 </script>
 
 </body>
