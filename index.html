@@ -6,8 +6,19 @@
 
 <style>
 body{margin:0;font-family:Arial;background:#0b1220;color:white}
-#editor{position:relative;height:60vh;background:black}
-#img{width:100%;height:100%;object-fit:contain}
+
+#editor{
+position:relative;
+height:60vh;
+background:black;
+overflow:hidden;
+}
+
+#img{
+width:100%;
+height:100%;
+object-fit:contain;
+}
 
 .corner{
 position:absolute;
@@ -89,55 +100,62 @@ border:2px solid #334155;
 
 <script>
 
-let pages=[];
-let current=0;
+let pages = [];
+let current = 0;
 
-let img=document.getElementById('img');
-let editor=document.getElementById('editor');
-let file=document.getElementById('file');
+let img = document.getElementById('img');
+let editor = document.getElementById('editor');
+let file = document.getElementById('file');
 
-let mode='color';
+let mode = 'color';
 
-let corners=[
+let corners = [
 {x:40,y:60,id:'c1'},
 {x:300,y:60,id:'c2'},
 {x:300,y:400,id:'c3'},
 {x:40,y:400,id:'c4'}
 ];
 
-// LOAD
-file.onchange=(e)=>{
+// =====================
+// LOAD IMAGES
+// =====================
+file.onchange = (e)=>{
 [...e.target.files].forEach(f=>{
-let r=new FileReader();
-r.onload=()=>{
+let r = new FileReader();
+r.onload = ()=>{
 pages.push(r.result);
-current=pages.length-1;
-show();render();
+current = pages.length-1;
+show();
+render();
 };
 r.readAsDataURL(f);
 });
 };
 
 function show(){
-img.src=pages[current];
+img.src = pages[current];
 updateCorners();
 }
 
 function render(){
-let p=document.getElementById('pages');
-p.innerHTML='';
+let p = document.getElementById('pages');
+p.innerHTML = '';
+
 pages.forEach((src,i)=>{
-let im=document.createElement('img');
-im.src=src;
-im.className='thumb'+(i===current?' active':'');
-im.onclick=()=>{current=i;show()};
+let im = document.createElement('img');
+im.src = src;
+im.className = 'thumb' + (i===current?' active':'');
+im.onclick = ()=>{current=i;show();};
 p.appendChild(im);
 });
 }
 
+// =====================
 // MODE
+// =====================
 function setMode(m){
-mode=m;
+mode = m;
+
 ['mColor','mGray','mBW'].forEach(id=>{
 document.getElementById(id).classList.remove('active');
 });
@@ -147,12 +165,15 @@ if(m==='gray') document.getElementById('mGray').classList.add('active');
 if(m==='bw') document.getElementById('mBW').classList.add('active');
 }
 
+// =====================
 // DRAG CORNERS
+// =====================
 corners.forEach(c=>{
-let el=document.getElementById(c.id);
-let drag=false;
+let el = document.getElementById(c.id);
+let drag = false;
 
-el.onmousedown=el.ontouchstart=()=>drag=true;
+el.onmousedown = el.ontouchstart = ()=>drag=true;
+
 window.addEventListener('mouseup',()=>drag=false);
 window.addEventListener('touchend',()=>drag=false);
 
@@ -160,102 +181,120 @@ window.addEventListener('mousemove',move);
 window.addEventListener('touchmove',move);
 
 function move(e){
-if(!drag)return;
-let r=editor.getBoundingClientRect();
-c.x=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
-c.y=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+if(!drag) return;
+
+let r = editor.getBoundingClientRect();
+
+let x = e.touches ? e.touches[0].clientX : e.clientX;
+let y = e.touches ? e.touches[0].clientY : e.clientY;
+
+c.x = x - r.left;
+c.y = y - r.top;
+
 updateCorners();
 }
 });
+
 function updateCorners(){
 corners.forEach(c=>{
-let el=document.getElementById(c.id);
-el.style.left=c.x+'px';
-el.style.top=c.y+'px';
+let el = document.getElementById(c.id);
+el.style.left = c.x + 'px';
+el.style.top = c.y + 'px';
 });
 }
 
+// =====================
 // ROTATE
+// =====================
 function rotatePage(){
-let image=new Image();
-image.src=pages[current];
+let image = new Image();
+image.src = pages[current];
 
-image.onload=()=>{
-let c=document.createElement('canvas');
-let ctx=c.getContext('2d');
+image.onload = ()=>{
+let c = document.createElement('canvas');
+let ctx = c.getContext('2d');
 
-c.width=image.height;
-c.height=image.width;
+c.width = image.height;
+c.height = image.width;
 
 ctx.translate(c.width/2,c.height/2);
 ctx.rotate(Math.PI/2);
 ctx.drawImage(image,-image.width/2,-image.height/2);
 
-pages[current]=c.toDataURL();
-show();render();
+pages[current] = c.toDataURL();
+show();
+render();
 };
 }
 
-// MODE FILTER
+// =====================
+// FILTER
+// =====================
 function applyMode(canvas){
 if(mode==='color') return;
 
-let ctx=canvas.getContext('2d');
-let imgData=ctx.getImageData(0,0,canvas.width,canvas.height);
-let d=imgData.data;
+let ctx = canvas.getContext('2d');
+let imgData = ctx.getImageData(0,0,canvas.width,canvas.height);
+let d = imgData.data;
 
 for(let i=0;i<d.length;i+=4){
 let r=d[i],g=d[i+1],b=d[i+2];
-let gray=0.3*r+0.59*g+0.11*b;
+let gray = 0.3*r + 0.59*g + 0.11*b;
 
 if(mode==='gray'){
-let v=(gray-128)*1.2+128;
-d[i]=d[i+1]=d[i+2]=v;
+d[i]=d[i+1]=d[i+2]=gray;
 }
 
 if(mode==='bw'){
-let v=(gray-128)*1.6+128;
-v=v>150?255:0;
+let v = gray > 150 ? 255 : 0;
 d[i]=d[i+1]=d[i+2]=v;
 }
 }
+
 ctx.putImageData(imgData,0,0);
 }
 
-// ===============================
-// FIXED CAMSCANNER-LIKE CROP
-// ===============================
+// =====================
+// FIXED CROPPING (WORKING)
+// =====================
 function applyCrop(){
-let image=new Image();
-image.src=pages[current];
 
-image.onload=()=>{
+let image = new Image();
+image.src = pages[current];
 
-let canvas=document.createElement('canvas');
-let ctx=canvas.getContext('2d');
+image.onload = ()=>{
 
-let w=1200,h=1600;
-canvas.width=w;
-canvas.height=h;
+let canvas = document.createElement('canvas');
+let ctx = canvas.getContext('2d');
 
-let rect=editor.getBoundingClientRect();
+let W = 1200, H = 1600;
+canvas.width = W;
+canvas.height = H;
 
-let scaleX=image.width/rect.width;
-let scaleY=image.height/rect.height;
+let rect = editor.getBoundingClientRect();
 
-let p=corners.map(pt=>({
-x:pt.x*scaleX,
-y:pt.y*scaleY
+let scaleX = image.width / rect.width;
+let scaleY = image.height / rect.height;
+
+let src = corners.map(p=>({
+x:p.x * scaleX,
+y:p.y * scaleY
 }));
 
-// homography warp
-function warp(src,dst,img){
+let dst = [
+{x:0,y:0},
+{x:W,y:0},
+{x:W,y:H},
+{x:0,y:H}
+];
 
+// solve homography
 function H(src,dst){
 let A=[];
+
 for(let i=0;i<4;i++){
-let x=src[i].x,y=src[i].y;
-let X=dst[i].x,Y=dst[i].y;
+let x=src[i].x, y=src[i].y;
+let X=dst[i].x, Y=dst[i].y;
 
 A.push([-x,-y,-1,0,0,0,x*X,y*X,X]);
 A.push([0,0,0,-x,-y,-1,x*Y,y*Y,Y]);
@@ -271,7 +310,8 @@ A[j][k]-=f*A[i][k];
 }
 }
 
-let h=[0,0,0,0,0,0,0,0,1];
+let h=new Array(9).fill(0);
+h[8]=1;
 
 for(let i=7;i>=0;i--){
 h[i]=A[i][8];
@@ -281,68 +321,68 @@ h[i]-=h[j]*A[i][j];
 h[i]/=A[i][i];
 }
 
-return [
-h[0],h[1],h[2],
-h[3],h[4],h[5],
-h[6],h[7],h[8]
-];
+return h;
 }
 
-let Hm=H(src,dst);
+let M = H(src,dst);
 
-let temp=document.createElement('canvas');
-temp.width=img.width;
-temp.height=img.height;
+// draw source
+let temp = document.createElement('canvas');
+temp.width = image.width;
+temp.height = image.height;
 
-let tctx=temp.getContext('2d');
-tctx.drawImage(img,0,0);
+let tctx = temp.getContext('2d');
+tctx.drawImage(image,0,0);
 
-let srcData=tctx.getImageData(0,0,img.width,img.height).data;
+let srcData = tctx.getImageData(0,0,image.width,image.height).data;
 
-for(let y=0;y<h;y++){
-for(let x=0;x<w;x++){
+let out = ctx.createImageData(W,H);
 
-let d = Hm[6]*x + Hm[7]*y + Hm[8];
-let sx = (Hm[0]*x + Hm[1]*y + Hm[2]) / d;
-let sy = (Hm[3]*x + Hm[4]*y + Hm[5]) / d;
+for(let y=0;y<H;y++){
+for(let x=0;x<W;x++){
 
-let ix=Math.floor(sx);
-let iy=Math.floor(sy);
+let d = M[6]*x + M[7]*y + M[8];
+let sx = (M[0]*x + M[1]*y + M[2]) / d;
+let sy = (M[3]*x + M[4]*y + M[5]) / d;
 
-if(ix>=0&&iy>=0&&ix<img.width&&iy<img.height){
-let i=(iy*img.width+ix)*4;
-let o=(y*w+x)*4;
+let ix = Math.floor(sx);
+let iy = Math.floor(sy);
 
-ctx.canvas.getContext('2d').fillStyle="rgba(0,0,0,0)";
+let o = (y*W + x)*4;
+
+if(ix>=0 && iy>=0 && ix<image.width && iy<image.height){
+let i = (iy*image.width + ix)*4;
+
+out.data[o] = srcData[i];
+out.data[o+1] = srcData[i+1];
+out.data[o+2] = srcData[i+2];
+out.data[o+3] = 255;
 }
 }
 }
 
-let imgData=ctx.createImageData(w,h);
-ctx.putImageData(imgData,0,0);
+ctx.putImageData(out,0,0);
 
-// re-draw correct warp
-warp(p,p,image);
-
-// overlay (CamScanner feel)
-ctx.fillStyle="rgba(0,0,0,0.35)";
-ctx.fillRect(0,0,w,h);
-
+// apply filter
 applyMode(canvas);
 
-pages[current]=canvas.toDataURL('image/jpeg',1);
-show();render();
+// save
+pages[current] = canvas.toDataURL('image/jpeg',1);
+show();
+render();
 };
 }
 
-// PDF EXPORT
+// =====================
+// EXPORT PDF
+// =====================
 function exportPDF(){
-const {jsPDF}=window.jspdf;
-let pdf=new jsPDF('p','pt','a4');
+const {jsPDF} = window.jspdf;
+let pdf = new jsPDF('p','pt','a4');
 
 pages.forEach((img,i)=>{
 pdf.addImage(img,'JPEG',0,0,595,842);
-if(i<pages.length-1)pdf.addPage();
+if(i < pages.length-1) pdf.addPage();
 });
 
 pdf.save('scan.pdf');
@@ -351,4 +391,4 @@ pdf.save('scan.pdf');
 </script>
 
 </body>
-</html>
+  </html>
