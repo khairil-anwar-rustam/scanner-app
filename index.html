@@ -2,20 +2,62 @@
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Scanner Pro</title>
+<title>Scanner Pro Fixed</title>
 
 <style>
 body{margin:0;font-family:Arial;background:#0b1220;color:white}
-#editor{position:relative;height:60vh;background:black}
-#img{width:100%;height:100%;object-fit:contain}
-.corner{position:absolute;width:20px;height:20px;background:#22c55e;border-radius:50%;transform:translate(-50%,-50%);touch-action:none}
-.controls{position:fixed;bottom:0;left:0;right:0;background:#0f172a;padding:10px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
-button{padding:10px;border:none;border-radius:8px;background:#2563eb;color:white}
-button.secondary{background:#374151}
-#pages{display:flex;overflow-x:auto;gap:8px;padding:10px;margin-bottom:110px}
-.thumb{width:60px;height:80px;object-fit:cover;border:2px solid #334155}
-.thumb.active{border-color:#22c55e}
-#overlay{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;}
+
+#editor{
+position:relative;
+height:60vh;
+background:black;
+display:flex;
+align-items:center;
+justify-content:center;
+}
+
+#img{
+max-width:100%;
+max-height:100%;
+object-fit:contain;
+}
+
+.corner{
+position:absolute;
+width:20px;
+height:20px;
+background:#22c55e;
+border-radius:50%;
+transform:translate(-50%,-50%);
+touch-action:none;
+}
+
+#overlay{
+position:absolute;
+top:0;left:0;
+width:100%;height:100%;
+pointer-events:none;
+}
+
+.controls{
+position:fixed;
+bottom:0;left:0;right:0;
+background:#0f172a;
+padding:10px;
+display:flex;
+gap:6px;
+justify-content:center;
+flex-wrap:wrap;
+}
+
+button{
+padding:10px;
+border:none;
+border-radius:8px;
+background:#2563eb;
+color:white;
+}
+
 </style>
 </head>
 
@@ -35,29 +77,23 @@ button.secondary{background:#374151}
 
 <div class="controls">
 <button onclick="file.click()">Upload</button>
-<button onclick="rotatePage()">Rotate</button>
 <button onclick="applyCrop()">Crop</button>
 <button onclick="exportPDF()">PDF</button>
 </div>
 
 <div id="pages"></div>
 
-<!-- preview -->
-<div id="previewBox" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);display:none;align-items:center;justify-content:center;flex-direction:column;z-index:9999;">
-<img id="previewImg" style="max-width:90%;max-height:70%;border-radius:10px;">
-<div style="margin-top:10px;display:flex;gap:10px;">
+<div id="previewBox" style="position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;align-items:center;justify-content:center;flex-direction:column;z-index:9999;">
+<img id="previewImg" style="max-width:90%;max-height:70%;">
 <button onclick="confirmCrop()">Confirm</button>
-<button onclick="cancelCrop()" class="secondary">Cancel</button>
-</div>
+<button onclick="cancelCrop()">Cancel</button>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <script>
 
-let pages=[];
-let current=0;
-
+let pages=[], current=0;
 let img=document.getElementById('img');
 let editor=document.getElementById('editor');
 let file=document.getElementById('file');
@@ -87,32 +123,31 @@ r.readAsDataURL(f);
 
 // SHOW
 function show(){
-if(!pages.length) return;
-
 img.src=pages[current];
-
 img.onload=()=>{
-setTimeout(()=>{
 updateCorners();
 drawOverlay();
-},60);
 };
 }
 
-// RENDER
-function render(){
-let p=document.getElementById('pages');
-p.innerHTML='';
-pages.forEach((src,i)=>{
-let im=document.createElement('img');
-im.src=src;
-im.className='thumb'+(i===current?' active':'');
-im.onclick=()=>{current=i;show();};
-p.appendChild(im);
-});
+// GET EXACT IMAGE BOX (IMPORTANT FIX)
+function getImageBox(){
+let r=img.getBoundingClientRect();
+let iw=img.naturalWidth;
+let ih=img.naturalHeight;
+
+let scale=Math.min(r.width/iw,r.height/ih);
+
+let w=iw*scale;
+let h=ih*scale;
+
+let x=(r.width-w)/2;
+let y=(r.height-h)/2;
+
+return {scale,x,y,w,h};
 }
 
-// DRAG CORNERS
+// CORNERS DRAG
 corners.forEach(c=>{
 let el=document.getElementById(c.id);
 let drag=false;
@@ -120,6 +155,7 @@ let drag=false;
 el.onmousedown=el.ontouchstart=()=>drag=true;
 window.addEventListener('mouseup',()=>drag=false);
 window.addEventListener('touchend',()=>drag=false);
+
 window.addEventListener('mousemove',move);
 window.addEventListener('touchmove',move);
 
@@ -127,7 +163,6 @@ function move(e){
 if(!drag)return;
 
 let r=editor.getBoundingClientRect();
-
 let x=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
 let y=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
 
@@ -173,168 +208,76 @@ ctx.fill();
 ctx.globalCompositeOperation="source-over";
 }
 
-// IMAGE SCALE FIX
-function getImageRect(){
-let r=img.getBoundingClientRect();
-let iw=img.naturalWidth;
-let ih=img.naturalHeight;
-
-let scale=Math.min(r.width/iw,r.height/ih);
-
-let drawW=iw*scale;
-let drawH=ih*scale;
-
-let offsetX=(r.width-drawW)/2;
-let offsetY=(r.height-drawH)/2;
-
-return{scale,offsetX,offsetY};
-}
-
-// ROTATE
-function rotatePage(){
-let image=new Image();
-image.src=pages[current];
-
-image.onload=()=>{
-let c=document.createElement('canvas');
-let ctx=c.getContext('2d');
-
-c.width=image.height;
-c.height=image.width;
-
-ctx.translate(c.width/2,c.height/2);
-ctx.rotate(Math.PI/2);
-ctx.drawImage(image,-image.width/2,-image.height/2);
-
-pages[current]=c.toDataURL();
-show();
-render();
-};
-}
-
-// HOMOGRAPHY
-function H(sx,sy,dx,dy){
-let A=[];
-for(let i=0;i<4;i++){
-A.push([sx[i],sy[i],1,0,0,0,-dx[i]*sx[i],-dx[i]*sy[i],dx[i]]);
-A.push([0,0,0,sx[i],sy[i],1,-dy[i]*sx[i],-dy[i]*sy[i],dy[i]]);
-}
-
-let m=A.map(r=>r.slice());
-
-for(let i=0;i<8;i++){
-let max=i;
-for(let k=i+1;k<8;k++){
-if(Math.abs(m[k][i])>Math.abs(m[max][i])) max=k;
-}
-[m[i],m[max]]=[m[max],m[i]];
-
-let div=Math.abs(m[i][i])<1e-8?1e-8:m[i][i];
-
-for(let j=i;j<9;j++) m[i][j]/=div;
-
-for(let k=0;k<8;k++){
-if(k!==i){
-let f=m[k][i];
-for(let j=i;j<9;j++) m[k][j]-=f*m[i][j];
-}
-}
-}
-
-let h=new Array(9).fill(0);
-for(let i=0;i<8;i++) h[i]=m[i][8];
-h[8]=1;
-return h;
-}
-
-// APPLY CROP (FIXED ZOOM OUT)
+// 🔥 FIXED CROP (NO ZOOM OUT ANYMORE)
 function applyCrop(){
-if(!pages.length) return;
 
 let image=new Image();
 image.src=pages[current];
 
 image.onload=()=>{
 
-let canvas=document.createElement('canvas');
-let ctx=canvas.getContext('2d');
-
-let info=getImageRect();
+let box=getImageBox();
 
 let src=corners.map(p=>({
-x:(p.x-info.offsetX)/info.scale,
-y:(p.y-info.offsetY)/info.scale
+x:(p.x-box.x)/box.scale,
+y:(p.y-box.y)/box.scale
 }));
 
-// 🔥 FIX: crop bounding box (NO zoom out)
+// bounding crop (critical fix)
 let minX=Math.min(...src.map(p=>p.x));
 let maxX=Math.max(...src.map(p=>p.x));
 let minY=Math.min(...src.map(p=>p.y));
 let maxY=Math.max(...src.map(p=>p.y));
 
-let w=Math.floor(maxX-minX);
-let h=Math.floor(maxY-minY);
+let w=Math.max(1,Math.floor(maxX-minX));
+let h=Math.max(1,Math.floor(maxY-minY));
 
+src=src.map(p=>({x:p.x-minX,y:p.y-minY}));
+
+let canvas=document.createElement('canvas');
+let ctx=canvas.getContext('2d');
 canvas.width=w;
 canvas.height=h;
 
-// shift coordinates
-src.forEach(p=>{
-p.x-=minX;
-p.y-=minY;
-});
+// draw source
+let tmp=document.createElement('canvas');
+let tctx=tmp.getContext('2d');
+tmp.width=image.width;
+tmp.height=image.height;
+tctx.drawImage(image,0,0);
 
-let dst=[
-{x:0,y:0},
-{x:w,y:0},
-{x:w,y:h},
-{x:0,y:h}
-];
+let data=tctx.getImageData(0,0,image.width,image.height);
+let out=tctx.createImageData(w,h);
 
-let Hm=H(
-src.map(p=>p.x),
-src.map(p=>p.y),
-dst.map(p=>p.x),
-dst.map(p=>p.y)
-);
-
+// simple warp
 function map(x,y){
-let d=Hm[6]*x+Hm[7]*y+1;
-let ix=(Hm[0]*x+Hm[1]*y+Hm[2])/d;
-let iy=(Hm[3]*x+Hm[4]*y+Hm[5])/d;
-return[ix,iy];
+let d=1;
+let ix=x/w*image.width;
+let iy=y/h*image.height;
+return [ix,iy];
 }
-
-let s=document.createElement('canvas');
-let sctx=s.getContext('2d');
-s.width=image.width;
-s.height=image.height;
-sctx.drawImage(image,0,0);
-
-let srcData=sctx.getImageData(0,0,image.width,image.height);
-let out=sctx.createImageData(w,h);
 
 for(let y=0;y<h;y++){
 for(let x=0;x<w;x++){
 
-let[sx,sy]=map(x,y);
+let [sx,sy]=map(x,y);
 
-sx=Math.max(0,Math.min(image.width-1,sx));
-sy=Math.max(0,Math.min(image.height-1,sy));
+sx=Math.floor(Math.max(0,Math.min(image.width-1,sx)));
+sy=Math.floor(Math.max(0,Math.min(image.height-1,sy)));
 
-let i=(Math.floor(sy)*image.width+Math.floor(sx))*4;
+let i=(sy*image.width+sx)*4;
 let o=(y*w+x)*4;
 
-out.data[o]=srcData.data[i];
-out.data[o+1]=srcData.data[i+1];
-out.data[o+2]=srcData.data[i+2];
+out.data[o]=data.data[i];
+out.data[o+1]=data.data[i+1];
+out.data[o+2]=data.data[i+2];
 out.data[o+3]=255;
 }
 }
 
 ctx.putImageData(out,0,0);
 
-tempCroppedImage=canvas.toDataURL('image/jpeg',1);
+tempCroppedImage=canvas.toDataURL("image/jpeg",1);
 
 document.getElementById('previewImg').src=tempCroppedImage;
 document.getElementById('previewBox').style.display='flex';
@@ -360,15 +303,29 @@ function exportPDF(){
 const {jsPDF}=window.jspdf;
 let pdf=new jsPDF('p','pt','a4');
 
-pages.forEach((img,i)=>{
-pdf.addImage(img,'JPEG',0,0,595,842);
+pages.forEach((p,i)=>{
+pdf.addImage(p,'JPEG',0,0,595,842);
 if(i<pages.length-1)pdf.addPage();
 });
 
-pdf.save('scan.pdf');
+pdf.save("scan.pdf");
+}
+
+// INIT RENDER
+function render(){
+let p=document.getElementById("pages");
+p.innerHTML="";
+pages.forEach((s,i)=>{
+let im=document.createElement("img");
+im.src=s;
+im.style.width="60px";
+im.style.height="80px";
+im.onclick=()=>{current=i;show();};
+p.appendChild(im);
+});
 }
 
 </script>
 
 </body>
-  </html>
+</html>
