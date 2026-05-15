@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Scanner Ultra Pro AI</title>
+<title>Scanner Ultra Pro AI FIXED+</title>
 
 <style>
 body{
@@ -53,16 +53,6 @@ height:100%;
 object-fit:contain;
 }
 
-.corner{
-position:absolute;
-width:18px;
-height:18px;
-background:red;
-border-radius:50%;
-cursor:grab;
-z-index:10;
-}
-
 #pages{
 display:flex;
 overflow-x:auto;
@@ -79,18 +69,16 @@ margin:5px;
 
 canvas{display:none;}
 </style>
-
 </head>
 
 <body>
 
-<header>📄 Scanner ULTRA PRO AI (Auto Border Detection)</header>
+<header>📄 Scanner ULTRA PRO AI (1-CLICK AUTO SCAN)</header>
 
 <div id="controls">
 <input type="file" id="fileInput" accept="image/*">
 
-<button onclick="autoDetectBorder()">AI Auto Detect</button>
-<button onclick="applyWarp()">Perspective Fix</button>
+<button onclick="oneClickScan()">🚀 One Click Auto Scan</button>
 <button onclick="addPage()">Add Page</button>
 <button onclick="exportPDF()">Export PDF</button>
 <button onclick="runOCR()">OCR</button>
@@ -98,10 +86,6 @@ canvas{display:none;}
 
 <div id="editor">
 <img id="img">
-<div class="corner" id="c1"></div>
-<div class="corner" id="c2"></div>
-<div class="corner" id="c3"></div>
-<div class="corner" id="c4"></div>
 </div>
 
 <div id="pages"></div>
@@ -118,55 +102,34 @@ let fileInput = document.getElementById("fileInput");
 let canvas = document.getElementById("canvas");
 let ctx = canvas.getContext("2d");
 
-let editor = document.getElementById("editor");
-
 let pages = [];
-let dragging = null;
+let cvReady = false;
 
-let corners = [
-c1,c2,c3,c4
-];
+/* OpenCV ready */
+cv['onRuntimeInitialized'] = () => {
+cvReady = true;
+console.log("OpenCV READY ✔");
+};
 
-/* ================= LOAD IMAGE ================= */
+/* LOAD IMAGE */
 fileInput.onchange = e=>{
 let file = e.target.files[0];
 let reader = new FileReader();
 
 reader.onload = ev=>{
 img.src = ev.target.result;
-img.onload = ()=> initCorners();
 };
 
 reader.readAsDataURL(file);
 };
 
-/* ================= INIT CORNERS ================= */
-function initCorners(){
-corners.forEach((c,i)=>{
-c.style.left = (20 + i*40) + "px";
-c.style.top = (20 + i*40) + "px";
-});
+/* =========================
+   🚀 ONE CLICK AUTO SCAN
+========================= */
+function oneClickScan(){
 
-corners.forEach(c=>{
-c.onmousedown = ()=> dragging = c;
-});
-
-document.onmousemove = e=>{
-if(!dragging) return;
-
-let rect = editor.getBoundingClientRect();
-
-dragging.style.left = (e.clientX - rect.left) + "px";
-dragging.style.top = (e.clientY - rect.top) + "px";
-};
-
-document.onmouseup = ()=> dragging = null;
-}
-
-/* ================= AI BORDER DETECTION ================= */
-function autoDetectBorder(){
-if(!window.cv){
-alert("OpenCV loading...");
+if(!cvReady){
+alert("OpenCV still loading...");
 return;
 }
 
@@ -174,19 +137,19 @@ let src = cv.imread(img);
 let gray = new cv.Mat();
 let blur = new cv.Mat();
 let edges = new cv.Mat();
-let hierarchy = new cv.Mat();
 let contours = new cv.MatVector();
+let hierarchy = new cv.Mat();
 
 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 cv.GaussianBlur(gray, blur, new cv.Size(5,5), 0);
-cv.Canny(blur, edges, 50, 150);
+cv.Canny(blur, edges, 60, 180);
 
 cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-let maxArea = 0;
 let best = null;
+let maxArea = 0;
 
-/* find largest quadrilateral */
+/* FIND DOCUMENT */
 for(let i=0;i<contours.size();i++){
 let cnt = contours.get(i);
 let approx = new cv.Mat();
@@ -204,75 +167,79 @@ best = approx;
 
 /* fallback */
 if(!best){
-alert("No document detected - try better lighting");
-src.delete(); gray.delete(); blur.delete(); edges.delete(); contours.delete(); hierarchy.delete();
+alert("No document found - try better lighting");
+src.delete(); gray.delete(); blur.delete(); edges.delete();
+contours.delete(); hierarchy.delete();
 return;
 }
 
-/* convert detected points -> corners */
-let pts = [];
-for(let i=0;i<4;i++){
-pts.push(best.data32S[i*2]);
-pts.push(best.data32S[i*2+1]);
-}
+let pts = best.data32S;
 
-/* normalize to image display */
-let rect = editor.getBoundingClientRect();
-
-for(let i=0;i<4;i++){
-corners[i].style.left = (pts[i*2] / img.width * rect.width) + "px";
-corners[i].style.top  = (pts[i*2+1] / img.height * rect.height) + "px";
-}
-
-alert("AI border detected ✔");
-
-src.delete(); gray.delete(); blur.delete(); edges.delete(); contours.delete(); hierarchy.delete();
-}
-
-/* ================= PERSPECTIVE WARP ================= */
-function applyWarp(){
-if(!window.cv) return;
-
-let rect = editor.getBoundingClientRect();
-
-function getCorner(id){
-let el = document.getElementById(id);
-return [
-(el.offsetLeft / rect.width) * img.width,
-(el.offsetTop / rect.height) * img.height
+/* reorder points */
+let p = [
+{ x: pts[0], y: pts[1] },
+{ x: pts[2], y: pts[3] },
+{ x: pts[4], y: pts[5] },
+{ x: pts[6], y: pts[7] }
 ];
-}
 
+p.sort((a,b)=>a.y-b.y);
+
+let top = p.slice(0,2).sort((a,b)=>a.x-b.x);
+let bottom = p.slice(2,4).sort((a,b)=>a.x-b.x);
+
+let ordered = [
+top[0],
+top[1],
+bottom[1],
+bottom[0]
+];
+
+/* size */
+let widthA = Math.hypot(ordered[2].x - ordered[3].x, ordered[2].y - ordered[3].y);
+let widthB = Math.hypot(ordered[1].x - ordered[0].x, ordered[1].y - ordered[0].y);
+let maxW = Math.max(widthA, widthB);
+
+let heightA = Math.hypot(ordered[1].x - ordered[2].x, ordered[1].y - ordered[2].y);
+let heightB = Math.hypot(ordered[0].x - ordered[3].x, ordered[0].y - ordered[3].y);
+let maxH = Math.max(heightA, heightB);
+
+/* transform */
 let srcPts = cv.matFromArray(4,1,cv.CV_32FC2,[
-...getCorner("c1"),
-...getCorner("c2"),
-...getCorner("c3"),
-...getCorner("c4")
+ordered[0].x, ordered[0].y,
+ordered[1].x, ordered[1].y,
+ordered[2].x, ordered[2].y,
+ordered[3].x, ordered[3].y
 ]);
 
 let dstPts = cv.matFromArray(4,1,cv.CV_32FC2,[
 0,0,
-img.width,0,
-img.width,img.height,
-0,img.height
+maxW,0,
+maxW,maxH,
+0,maxH
 ]);
 
-let src = cv.imread(img);
 let M = cv.getPerspectiveTransform(srcPts, dstPts);
 
 let dst = new cv.Mat();
-cv.warpPerspective(src, dst, M, new cv.Size(img.width,img.height));
+cv.warpPerspective(src, dst, M, new cv.Size(maxW,maxH));
 
 cv.imshow(canvas, dst);
-img.src = canvas.toDataURL();
 
-src.delete(); dst.delete(); M.delete();
+/* replace image */
+img.src = canvas.toDataURL("image/jpeg", 1.0);
+
+/* cleanup */
+src.delete(); gray.delete(); blur.delete(); edges.delete();
+contours.delete(); hierarchy.delete();
+dst.delete(); M.delete();
 srcPts.delete(); dstPts.delete();
+best.delete();
 
-alert("Warp applied ✔");
+alert("Auto Scan Done ✔ (Cropped + Straightened)");
 }
 
-/* ================= MULTI PAGE ================= */
+/* ================= PAGE ================= */
 function addPage(){
 pages.push(img.src);
 renderPages();
@@ -324,7 +291,7 @@ res();
 });
 }
 
-pdf.save("scan-ai-pro.pdf");
+pdf.save("scan-ultra-pro.pdf");
 }
 
 </script>
