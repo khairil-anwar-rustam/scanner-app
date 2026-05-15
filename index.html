@@ -65,9 +65,6 @@ border:2px solid #334155;
 }
 
 .thumb.active{border-color:#22c55e}
-
-.mode{opacity:.7}
-.mode.active{opacity:1;outline:2px solid #22c55e}
 </style>
 </head>
 
@@ -88,10 +85,6 @@ border:2px solid #334155;
 <button onclick="rotatePage()">Rotate</button>
 <button onclick="applyCrop()">Crop</button>
 <button onclick="exportPDF()">PDF</button>
-
-<button class="secondary mode active" id="mColor" onclick="setMode('color')">Color</button>
-<button class="secondary mode" id="mGray" onclick="setMode('gray')">Gray</button>
-<button class="secondary mode" id="mBW" onclick="setMode('bw')">B/W</button>
 </div>
 
 <div id="pages"></div>
@@ -107,8 +100,6 @@ let img = document.getElementById('img');
 let editor = document.getElementById('editor');
 let file = document.getElementById('file');
 
-let mode = 'color';
-
 let corners = [
 {x:40,y:60,id:'c1'},
 {x:300,y:60,id:'c2'},
@@ -117,7 +108,7 @@ let corners = [
 ];
 
 // =====================
-// LOAD IMAGES
+// LOAD
 // =====================
 file.onchange = (e)=>{
 [...e.target.files].forEach(f=>{
@@ -151,48 +142,32 @@ p.appendChild(im);
 }
 
 // =====================
-// MODE
-// =====================
-function setMode(m){
-mode = m;
-
-['mColor','mGray','mBW'].forEach(id=>{
-document.getElementById(id).classList.remove('active');
-});
-
-if(m==='color') document.getElementById('mColor').classList.add('active');
-if(m==='gray') document.getElementById('mGray').classList.add('active');
-if(m==='bw') document.getElementById('mBW').classList.add('active');
-}
-
-// =====================
-// DRAG CORNERS
+// POINTER DRAG FIX
 // =====================
 corners.forEach(c=>{
 let el = document.getElementById(c.id);
-let drag = false;
+let dragging = false;
 
-el.onmousedown = el.ontouchstart = ()=>drag=true;
+el.addEventListener('pointerdown',()=>dragging=true);
+window.addEventListener('pointerup',()=>dragging=false);
 
-window.addEventListener('mouseup',()=>drag=false);
-window.addEventListener('touchend',()=>drag=false);
-
-window.addEventListener('mousemove',move);
-window.addEventListener('touchmove',move);
-
-function move(e){
-if(!drag) return;
+window.addEventListener('pointermove',(e)=>{
+if(!dragging) return;
 
 let r = editor.getBoundingClientRect();
 
-let x = e.touches ? e.touches[0].clientX : e.clientX;
-let y = e.touches ? e.touches[0].clientY : e.clientY;
+let x = e.clientX - r.left;
+let y = e.clientY - r.top;
 
-c.x = x - r.left;
-c.y = y - r.top;
+// clamp inside editor
+x = Math.max(0,Math.min(r.width,x));
+y = Math.max(0,Math.min(r.height,y));
+
+c.x = x;
+c.y = y;
 
 updateCorners();
-}
+});
 });
 
 function updateCorners(){
@@ -221,87 +196,23 @@ ctx.translate(c.width/2,c.height/2);
 ctx.rotate(Math.PI/2);
 ctx.drawImage(image,-image.width/2,-image.height/2);
 
-pages[current] = c.toDataURL();
+pages[current] = c.toDataURL('image/jpeg',1);
 show();
 render();
 };
 }
 
 // =====================
-// FILTER
+// SAFE HOMOGRAPHY SOLVER
 // =====================
-function applyMode(canvas){
-if(mode==='color') return;
-
-let ctx = canvas.getContext('2d');
-let imgData = ctx.getImageData(0,0,canvas.width,canvas.height);
-let d = imgData.data;
-
-for(let i=0;i<d.length;i+=4){
-let r=d[i],g=d[i+1],b=d[i+2];
-let gray = 0.3*r + 0.59*g + 0.11*b;
-
-if(mode==='gray'){
-d[i]=d[i+1]=d[i+2]=gray;
-}
-
-if(mode==='bw'){
-let v = gray > 150 ? 255 : 0;
-d[i]=d[i+1]=d[i+2]=v;
-}
-}
-
-ctx.putImageData(imgData,0,0);
-}
-
-// =====================
-// FIXED CROPPING (WORKING)
-// =====================
-function applyCrop(){
-
-let image = new Image();
-image.src = pages[current];
-
-image.onload = ()=>{
-
-let canvas = document.createElement('canvas');
-let ctx = canvas.getContext('2d');
-
-let W = 1200, H = 1600;
-canvas.width = W;
-canvas.height = H;
-
-let rect = editor.getBoundingClientRect();
-
-let scaleX = image.width / rect.width;
-let scaleY = image.height / rect.height;
-
-let src = corners.map(p=>({
-x:p.x * scaleX,
-y:p.y * scaleY
-}));
-
-let dst = [
-{x:0,y:0},
-{x:W,y:0},
-{x:W,y:H},
-{x:0,y:H}
-];
-
-// solve homography
-function H(src,dst){
-let A=[];
-
-for(let i=0;i<4;i++){
-let x=src[i].x, y=src[i].y;
-let X=dst[i].x, Y=dst[i].y;
-
-A.push([-x,-y,-1,0,0,0,x*X,y*X,X]);
-A.push([0,0,0,-x,-y,-1,x*Y,y*Y,Y]);
-}
-
-// gaussian elimination
+function solveH(A){
 for(let i=0;i<8;i++){
+let maxRow=i;
+for(let j=i+1;j<8;j++){
+if(Math.abs(A[j][i])>Math.abs(A[maxRow][i])) maxRow=j;
+}
+[A[i],A[maxRow]]=[A[maxRow],A[i]];
+
 for(let j=i+1;j<8;j++){
 let f=A[j][i]/A[i][i];
 for(let k=i;k<9;k++){
@@ -320,13 +231,57 @@ h[i]-=h[j]*A[i][j];
 }
 h[i]/=A[i][i];
 }
-
 return h;
 }
 
+function H(src,dst){
+let A=[];
+for(let i=0;i<4;i++){
+let x=src[i].x, y=src[i].y;
+let X=dst[i].x, Y=dst[i].y;
+
+A.push([-x,-y,-1,0,0,0,x*X,y*X,X]);
+A.push([0,0,0,-x,-y,-1,x*Y,y*Y,Y]);
+}
+return solveH(A);
+}
+
+// =====================
+// CROPPING FIXED
+// =====================
+function applyCrop(){
+
+let image = new Image();
+image.src = pages[current];
+
+image.onload = ()=>{
+
+let canvas = document.createElement('canvas');
+let ctx = canvas.getContext('2d');
+
+let W = 1200, Hh = 1600;
+canvas.width = W;
+canvas.height = Hh;
+
+let rect = editor.getBoundingClientRect();
+
+let scaleX = image.width / rect.width;
+let scaleY = image.height / rect.height;
+
+let src = corners.map(p=>({
+x:p.x * scaleX,
+y:p.y * scaleY
+}));
+
+let dst = [
+{x:0,y:0},
+{x:W,y:0},
+{x:W,y:Hh},
+{x:0,y:Hh}
+];
+
 let M = H(src,dst);
 
-// draw source
 let temp = document.createElement('canvas');
 temp.width = image.width;
 temp.height = image.height;
@@ -336,38 +291,34 @@ tctx.drawImage(image,0,0);
 
 let srcData = tctx.getImageData(0,0,image.width,image.height).data;
 
-let out = ctx.createImageData(W,H);
+let out = ctx.createImageData(W,Hh);
 
-for(let y=0;y<H;y++){
+for(let y=0;y<Hh;y++){
 for(let x=0;x<W;x++){
 
 let d = M[6]*x + M[7]*y + M[8];
 let sx = (M[0]*x + M[1]*y + M[2]) / d;
 let sy = (M[3]*x + M[4]*y + M[5]) / d;
 
-let ix = Math.floor(sx);
-let iy = Math.floor(sy);
+let ix = sx|0;
+let iy = sy|0;
 
 let o = (y*W + x)*4;
 
 if(ix>=0 && iy>=0 && ix<image.width && iy<image.height){
 let i = (iy*image.width + ix)*4;
 
-out.data[o] = srcData[i];
-out.data[o+1] = srcData[i+1];
-out.data[o+2] = srcData[i+2];
-out.data[o+3] = 255;
+out.data[o]=srcData[i];
+out.data[o+1]=srcData[i+1];
+out.data[o+2]=srcData[i+2];
+out.data[o+3]=255;
 }
 }
 }
 
 ctx.putImageData(out,0,0);
 
-// apply filter
-applyMode(canvas);
-
-// save
-pages[current] = canvas.toDataURL('image/jpeg',1);
+pages[current] = canvas.toDataURL('image/jpeg',0.95);
 show();
 render();
 };
@@ -382,7 +333,7 @@ let pdf = new jsPDF('p','pt','a4');
 
 pages.forEach((img,i)=>{
 pdf.addImage(img,'JPEG',0,0,595,842);
-if(i < pages.length-1) pdf.addPage();
+if(i<pages.length-1) pdf.addPage();
 });
 
 pdf.save('scan.pdf');
@@ -391,4 +342,4 @@ pdf.save('scan.pdf');
 </script>
 
 </body>
-  </html>
+</html>
