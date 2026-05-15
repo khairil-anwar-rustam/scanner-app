@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Scanner Pro v2</title>
+<title>AI Document Scanner</title>
 
+<script async src="https://docs.opencv.org/4.x/opencv.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <style>
@@ -25,216 +26,173 @@ font-weight:bold;
 canvas{
 max-width:100%;
 border-radius:10px;
-touch-action:none;
-}
-
-.wrap{
-position:relative;
-display:inline-block;
 margin-top:10px;
 }
 
-.corner{
-width:20px;
-height:20px;
-border-radius:50%;
-background:#00ffd5;
-position:absolute;
-touch-action:none;
-}
-
 button{
-margin:5px;
-padding:10px;
+margin:6px;
+padding:10px 14px;
 border-radius:8px;
 border:none;
 background:#1f2a44;
 color:white;
+font-weight:bold;
+}
+
+input{
+margin:10px;
 }
 </style>
 </head>
 
 <body>
 
-<header>📄 Scanner Pro v2 (Fixed)</header>
+<header>📄 AI Scanner (OpenCV Powered)</header>
 
 <input type="file" id="file" accept="image/*"/>
 
-<div class="wrap">
-<canvas id="c"></canvas>
+<br>
 
-<div class="corner" id="p0"></div>
-<div class="corner" id="p1"></div>
-<div class="corner" id="p2"></div>
-<div class="corner" id="p3"></div>
-</div>
+<canvas id="canvas"></canvas>
 
 <br>
 
-<button onclick="warpCrop()">Crop</button>
-<button onclick="rotate()">Rotate</button>
-<button onclick="downloadPDF()">PDF</button>
+<button onclick="autoScan()">Auto Scan</button>
+<button onclick="exportPDF()">Export PDF</button>
 
 <script>
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
-
 let img = new Image();
-let angle = 0;
+let srcMat, dstMat;
 
-let pts = [
-{x:40,y:40},
-{x:300,y:40},
-{x:300,y:400},
-{x:40,y:400}
-];
-
-const corners = [...document.querySelectorAll(".corner")];
-
-let drag = null;
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
 
 // ---------- LOAD IMAGE ----------
 document.getElementById("file").onchange = e=>{
-const r = new FileReader();
-r.onload = ev=>{
+const reader = new FileReader();
+reader.onload = ev=>{
 img = new Image();
 img.onload = ()=>{
 canvas.width = img.width;
 canvas.height = img.height;
-draw();
-resetPts();
+ctx.drawImage(img,0,0);
 };
 img.src = ev.target.result;
 };
-r.readAsDataURL(e.target.files[0]);
+reader.readAsDataURL(e.target.files[0]);
 };
 
-// ---------- DRAW ----------
-function draw(){
-ctx.clearRect(0,0,canvas.width,canvas.height);
-
-ctx.save();
-ctx.translate(canvas.width/2,canvas.height/2);
-ctx.rotate(angle*Math.PI/180);
-ctx.drawImage(img,-img.width/2,-img.height/2);
-ctx.restore();
-
-updateUI();
+// ---------- WAIT FOR OPENCV ----------
+function onOpenCvReady(){
+console.log("OpenCV Ready");
 }
 
-// ---------- CORNERS ----------
-function resetPts(){
-pts = [
-{x:50,y:50},
-{x:canvas.width-50,y:50},
-{x:canvas.width-50,y:canvas.height-50},
-{x:50,y:canvas.height-50}
-];
-updateUI();
+// ---------- AUTO SCAN ----------
+function autoScan(){
+
+srcMat = cv.imread(canvas);
+let gray = new cv.Mat();
+let blurred = new cv.Mat();
+let edges = new cv.Mat();
+
+cv.cvtColor(srcMat, gray, cv.COLOR_RGBA2GRAY);
+cv.GaussianBlur(gray, blurred, new cv.Size(5,5), 0);
+cv.Canny(blurred, edges, 75, 200);
+
+// find contours
+let contours = new cv.MatVector();
+let hierarchy = new cv.Mat();
+
+cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+let maxArea = 0;
+let page = null;
+
+for(let i=0;i<contours.size();i++){
+let cnt = contours.get(i);
+let area = cv.contourArea(cnt);
+
+if(area > maxArea){
+let peri = cv.arcLength(cnt,true);
+let approx = new cv.Mat();
+
+cv.approxPolyDP(cnt, approx, 0.02*peri,true);
+
+if(approx.rows === 4){
+page = approx;
+maxArea = area;
+}
+}
 }
 
-function updateUI(){
-pts.forEach((p,i)=>{
-corners[i].style.left = p.x+"px";
-corners[i].style.top = p.y+"px";
+// fallback if no document found
+if(!page){
+alert("Document not detected clearly. Try better lighting.");
+return;
+}
+
+// perspective transform
+let pts = [];
+for(let i=0;i<4;i++){
+pts.push({
+x: page.data32S[i*2],
+y: page.data32S[i*2+1]
 });
 }
 
-// ---------- TOUCH DRAG ----------
-corners.forEach((c,i)=>{
-c.addEventListener("pointerdown",()=>drag=i);
+// sort points
+pts = pts.sort((a,b)=>a.y-b.y);
+let top = pts.slice(0,2).sort((a,b)=>a.x-b.x);
+let bottom = pts.slice(2,4).sort((a,b)=>a.x-b.x);
 
-window.addEventListener("pointermove",e=>{
-if(drag===null) return;
+let tl = top[0], tr = top[1], bl = bottom[0], br = bottom[1];
 
-let r = canvas.getBoundingClientRect();
-pts[drag] = {
-x:e.clientX - r.left,
-y:e.clientY - r.top
-};
-updateUI();
-draw();
-});
+let width = 800;
+let height = 1000;
 
-window.addEventListener("pointerup",()=>drag=null);
-});
+let srcTri = cv.matFromArray(4,1,cv.CV_32FC2,[
+tl.x,tl.y,
+tr.x,tr.y,
+br.x,br.y,
+bl.x,bl.y
+]);
 
-// ---------- ROTATE ----------
-function rotate(){
-angle += 90;
-draw();
+let dstTri = cv.matFromArray(4,1,cv.CV_32FC2,[
+0,0,
+width,0,
+width,height,
+0,height
+]);
+
+let M = cv.getPerspectiveTransform(srcTri,dstTri);
+
+let dst = new cv.Mat();
+
+cv.warpPerspective(srcMat,dst,M,new cv.Size(width,height));
+
+cv.imshow(canvas,dst);
+
+// cleanup
+srcMat.delete();
+gray.delete();
+blurred.delete();
+edges.delete();
+contours.delete();
+hierarchy.delete();
+dst.delete();
+
+alert("Auto scan completed!");
 }
 
-// ---------- REAL PERSPECTIVE WARP ----------
-function warpCrop(){
-
-let temp = document.createElement("canvas");
-temp.width = 600;
-temp.height = 800;
-let t = temp.getContext("2d");
-
-let src = ctx.getImageData(0,0,canvas.width,canvas.height);
-
-let dst = t.createImageData(temp.width,temp.height);
-
-function sample(x,y){
-let i = (Math.floor(y)*canvas.width + Math.floor(x))*4;
-return [
-src.data[i]||0,
-src.data[i+1]||0,
-src.data[i+2]||0,
-src.data[i+3]||255
-];
-}
-
-// bilinear warp
-for(let y=0;y<temp.height;y++){
-for(let x=0;x<temp.width;x++){
-
-let u = x/temp.width;
-let v = y/temp.height;
-
-let X =
-(1-u)*(1-v)*pts[0].x +
-u*(1-v)*pts[1].x +
-u*v*pts[2].x +
-(1-u)*v*pts[3].x;
-
-let Y =
-(1-u)*(1-v)*pts[0].y +
-u*(1-v)*pts[1].y +
-u*v*pts[2].y +
-(1-u)*v*pts[3].y;
-
-let c = sample(X,Y);
-
-let i = (y*temp.width + x)*4;
-dst.data[i]=c[0];
-dst.data[i+1]=c[1];
-dst.data[i+2]=c[2];
-dst.data[i+3]=255;
-}
-}
-
-t.putImageData(dst,0,0);
-
-// replace canvas
-canvas.width = temp.width;
-canvas.height = temp.height;
-ctx.drawImage(temp,0,0);
-}
-
-// ---------- PDF ----------
-function downloadPDF(){
+// ---------- EXPORT PDF ----------
+function exportPDF(){
 const { jsPDF } = window.jspdf;
 let pdf = new jsPDF();
 
 pdf.addImage(canvas.toDataURL("image/jpeg"),"JPEG",10,10,180,250);
 pdf.save("scan.pdf");
 }
-
-draw();
 </script>
 
 </body>
-  </html>
+</html>
