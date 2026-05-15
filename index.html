@@ -20,6 +20,7 @@ button.secondary{background:#374151}
 #overlay{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;}
 </style>
 </head>
+
 <body>
 
 <div id="editor">
@@ -49,13 +50,14 @@ button.secondary{background:#374151}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <script>
+
 let pages=[];
 let current=0;
 let img=document.getElementById('img');
 let editor=document.getElementById('editor');
 let file=document.getElementById('file');
-let mode='color'; // color | gray | bw
-let tempCroppedImage = null;
+let mode='color';
+let tempCroppedImage=null;
 
 let corners=[
 {x:40,y:60,id:'c1'},
@@ -65,7 +67,7 @@ let corners=[
 ];
 
 // LOAD FILES
-file.onchange = (e)=>{
+file.onchange=(e)=>{
 [...e.target.files].forEach(f=>{
 let r=new FileReader();
 r.onload=()=>{
@@ -75,17 +77,18 @@ show();render();
 };
 r.readAsDataURL(f);
 });
-}
+};
 
-function show(){img.src=pages[current];updateCorners()}
+function show(){img.src=pages[current];updateCorners();}
 
 function render(){
-let p=document.getElementById('pages');p.innerHTML='';
+let p=document.getElementById('pages');
+p.innerHTML='';
 pages.forEach((src,i)=>{
 let im=document.createElement('img');
 im.src=src;
 im.className='thumb'+(i===current?' active':'');
-im.onclick=()=>{current=i;show()};
+im.onclick=()=>{current=i;show();};
 p.appendChild(im);
 });
 }
@@ -94,9 +97,7 @@ p.appendChild(im);
 function setMode(m){
 mode=m;
 ['mColor','mGray','mBW'].forEach(id=>document.getElementById(id).classList.remove('active'));
-if(m==='color') document.getElementById('mColor').classList.add('active');
-if(m==='gray') document.getElementById('mGray').classList.add('active');
-if(m==='bw') document.getElementById('mBW').classList.add('active');
+document.getElementById('m'+m.charAt(0).toUpperCase()+m.slice(1)).classList.add('active');
 }
 
 // DRAG CORNERS
@@ -138,11 +139,9 @@ canvas.height=rect.height;
 
 ctx.clearRect(0,0,canvas.width,canvas.height);
 
-// dark overlay
 ctx.fillStyle="rgba(0,0,0,0.55)";
 ctx.fillRect(0,0,canvas.width,canvas.height);
 
-// crop area (transparent hole)
 ctx.globalCompositeOperation="destination-out";
 
 ctx.beginPath();
@@ -154,113 +153,69 @@ ctx.closePath();
 ctx.fill();
 
 ctx.globalCompositeOperation="source-over";
-  }
+}
+
+// FIXED IMAGE FIT CALCULATION
+function getImageRect(){
+let r = img.getBoundingClientRect();
+let iw = img.naturalWidth;
+let ih = img.naturalHeight;
+
+let scale = Math.min(r.width/iw, r.height/ih);
+
+let offsetX = (r.width - iw*scale)/2;
+let offsetY = (r.height - ih*scale)/2;
+
+return {scale,offsetX,offsetY};
+}
 
 // ROTATE
 function rotatePage(){
 let image=new Image();
 image.src=pages[current];
+
 image.onload=()=>{
 let c=document.createElement('canvas');
 let ctx=c.getContext('2d');
 c.width=image.height;
 c.height=image.width;
+
 ctx.translate(c.width/2,c.height/2);
 ctx.rotate(Math.PI/2);
 ctx.drawImage(image,-image.width/2,-image.height/2);
+
 pages[current]=c.toDataURL();
 show();render();
 };
 }
 
-// ENHANCEMENT MODES
+// MODE FILTERS
 function applyMode(canvas){
-if(mode==='color') return; // keep original
+if(mode==='color') return;
 
 let ctx=canvas.getContext('2d');
-let imgData=ctx.getImageData(0,0,canvas.width,canvas.height);
-let d=imgData.data;
+let data=ctx.getImageData(0,0,canvas.width,canvas.height);
+let d=data.data;
 
 for(let i=0;i<d.length;i+=4){
-let r=d[i], g=d[i+1], b=d[i+2];
+let r=d[i],g=d[i+1],b=d[i+2];
 let gray=0.3*r+0.59*g+0.11*b;
 
 if(mode==='gray'){
-// clean grayscale with mild contrast
 let v=(gray-128)*1.2+128;
 d[i]=d[i+1]=d[i+2]=v;
 }
 
 if(mode==='bw'){
-// high-contrast document (threshold)
 let v=(gray-128)*1.6+128;
-v = v>150 ? 255 : 0;
+v=v>150?255:0;
 d[i]=d[i+1]=d[i+2]=v;
 }
 }
-ctx.putImageData(imgData,0,0);
+ctx.putImageData(data,0,0);
 }
 
-// FAST WARP
-function applyCrop(){
-let image=new Image();
-image.src=pages[current];
-
-image.onload=()=>{
-let canvas=document.createElement('canvas');
-let ctx=canvas.getContext('2d');
-
-let w=1200,h=1600;
-canvas.width=w;
-canvas.height=h;
-
-// scale image to editor coordinates
-let rect=editor.getBoundingClientRect();
-let scaleX=image.width/rect.width;
-let scaleY=image.height/rect.height;
-
-// source quad (user selected)
-let src=[
-{ x: corners[0].x * scaleX, y: corners[0].y * scaleY },
-{ x: corners[1].x * scaleX, y: corners[1].y * scaleY },
-{ x: corners[2].x * scaleX, y: corners[2].y * scaleY },
-{ x: corners[3].x * scaleX, y: corners[3].y * scaleY }
-];
-
-// destination quad (perfect rectangle)
-let dst=[
-{ x: 0, y: 0 },
-{ x: w, y: 0 },
-{ x: w, y: h },
-{ x: 0, y: h }
-];
-
-// helper: draw warped quad using 2 triangles
-function warp(s0,s1,s2,d0,d1,d2){
-
-ctx.save();
-
-ctx.beginPath();
-ctx.moveTo(d0.x,d0.y);
-ctx.lineTo(d1.x,d1.y);
-ctx.lineTo(d2.x,d2.y);
-ctx.closePath();
-ctx.clip();
-
-// solve transform matrix
-let denom =
-s0.x*(s1.y-s2.y)+
-s1.x*(s2.y-s0.y)+
-s2.x*(s0.y-s1.y);
-
-let a =
-(d0.x*(s1.y-s2.y)+
- d1.x*(s2.y-s0.y)+
- d2.x*(s0.y-s1.y))/denom;
-
-let b =
-(d0.x*(s2.x-s1.x)+
- d1.x*(s0.x-s2.x)+
+// FIXED APPLY CROP
 function applyCrop(){
 let image=new Image();
 image.src=pages[current];
@@ -275,53 +230,41 @@ canvas.width=w;
 canvas.height=h;
 
 let rect=editor.getBoundingClientRect();
+let info=getImageRect();
 
-// --- convert corners to image space ---
+// CORRECT mapping
 let src=[
 {
-x: corners[0].x * image.width / rect.width,
-y: corners[0].y * image.height / rect.height
+x:(corners[0].x-info.offsetX)/info.scale,
+y:(corners[0].y-info.offsetY)/info.scale
 },
 {
-x: corners[1].x * image.width / rect.width,
-y: corners[1].y * image.height / rect.height
+x:(corners[1].x-info.offsetX)/info.scale,
+y:(corners[1].y-info.offsetY)/info.scale
 },
 {
-x: corners[2].x * image.width / rect.width,
-y: corners[2].y * image.height / rect.height
+x:(corners[2].x-info.offsetX)/info.scale,
+y:(corners[2].y-info.offsetY)/info.scale
 },
 {
-x: corners[3].x * image.width / rect.width,
-y: corners[3].y * image.height / rect.height
+x:(corners[3].x-info.offsetX)/info.scale,
+y:(corners[3].y-info.offsetY)/info.scale
 }
 ];
 
-// destination (flat document)
 let dst=[
-{ x: 0, y: 0 },
-{ x: w, y: 0 },
-{ x: w, y: h },
-{ x: 0, y: h }
+{ x:0,y:0 },
+{ x:w,y:0 },
+{ x:w,y:h },
+{ x:0,y:h }
 ];
 
-// -------- HOMOGRAPHY SOLVER --------
-function solveH(sx,sy,dx,dy){
+// homography solver
+function H(sx,sy,dx,dy){
 let A=[];
-
 for(let i=0;i<4;i++){
-A.push([
-sx[i], sy[i], 1, 0, 0, 0,
--dx[i]*sx[i],
--dx[i]*sy[i],
-dx[i]
-]);
-
-A.push([
-0, 0, 0, sx[i], sy[i], 1,
--dy[i]*sx[i],
--dy[i]*sy[i],
-dy[i]
-]);
+A.push([sx[i],sy[i],1,0,0,0,-dx[i]*sx[i],-dx[i]*sy[i],dx[i]]);
+A.push([0,0,0,sx[i],sy[i],1,-dy[i]*sx[i],-dy[i]*sy[i],dy[i]]);
 }
 
 let m=A.map(r=>r.slice());
@@ -339,9 +282,7 @@ for(let j=i;j<9;j++) m[i][j]/=div;
 for(let k=0;k<8;k++){
 if(k!==i){
 let f=m[k][i];
-for(let j=i;j<9;j++){
-m[k][j]-=f*m[i][j];
-}
+for(let j=i;j<9;j++) m[k][j]-=f*m[i][j];
 }
 }
 }
@@ -349,47 +290,41 @@ m[k][j]-=f*m[i][j];
 let h=new Array(9).fill(0);
 for(let i=0;i<8;i++) h[i]=m[i][8];
 h[8]=1;
-
 return h;
 }
 
-let H = solveH(
+let Hm=H(
 [src[0].x,src[1].x,src[2].x,src[3].x],
 [src[0].y,src[1].y,src[2].y,src[3].y],
 [dst[0].x,dst[1].x,dst[2].x,dst[3].x],
 [dst[0].y,dst[1].y,dst[2].y,dst[3].y]
 );
 
-// inverse mapping
 function map(x,y){
-let d = H[6]*x + H[7]*y + 1;
-let ix = (H[0]*x + H[1]*y + H[2]) / d;
-let iy = (H[3]*x + H[4]*y + H[5]) / d;
+let d = Hm[6]*x + Hm[7]*y + 1;
+let ix=(Hm[0]*x+Hm[1]*y+Hm[2])/d;
+let iy=(Hm[3]*x+Hm[4]*y+Hm[5])/d;
 return [ix,iy];
 }
 
-// source canvas
 let srcCanvas=document.createElement('canvas');
 let sctx=srcCanvas.getContext('2d');
-
 srcCanvas.width=image.width;
 srcCanvas.height=image.height;
-
 sctx.drawImage(image,0,0);
 
-let srcData=sctx.getImageData(0,0,srcCanvas.width,srcCanvas.height);
+let srcData=sctx.getImageData(0,0,image.width,image.height);
 let out=sctx.createImageData(w,h);
 
-// -------- REAL FLATTENING RENDER --------
 for(let y=0;y<h;y++){
 for(let x=0;x<w;x++){
 
-let [sxp,syp]=map(x,y);
+let [sx,sy]=map(x,y);
 
-sxp=Math.max(0,Math.min(image.width-1,sxp));
-syp=Math.max(0,Math.min(image.height-1,syp));
+sx=Math.max(0,Math.min(image.width-1,sx));
+sy=Math.max(0,Math.min(image.height-1,sy));
 
-let i=(Math.floor(syp)*image.width+Math.floor(sxp))*4;
+let i=(Math.floor(sy)*image.width+Math.floor(sx))*4;
 let o=(y*w+x)*4;
 
 out.data[o]=srcData.data[i];
@@ -400,86 +335,13 @@ out.data[o+3]=255;
 }
 
 ctx.putImageData(out,0,0);
-
-// apply filters
 applyMode(canvas);
 
-// SAVE RESULT
-tempCroppedImage = canvas.toDataURL('image/jpeg',1);
+tempCroppedImage=canvas.toDataURL('image/jpeg',1);
 
-// SHOW PREVIEW (your existing UI)
-document.getElementById('previewImg').src = tempCroppedImage;
-document.getElementById('previewBox').style.display = 'flex';
-
+document.getElementById('previewImg').src=tempCroppedImage;
+document.getElementById('previewBox').style.display='flex';
 };
-}
-
-// TOUCH REORDER (MOBILE FRIENDLY)
-let touchIndex = null;
-let pagesContainer = document.getElementById('pages');
-
-pagesContainer.addEventListener('touchstart', (e) => {
-  let target = e.target.closest('img');
-  if(!target) return;
-  touchIndex = [...pagesContainer.children].indexOf(target);
-  target.style.opacity = 0.5;
-});
-
-pagesContainer.addEventListener('touchmove', (e) => {
-  e.preventDefault();
-  let touch = e.touches[0];
-  let target = document.elementFromPoint(touch.clientX, touch.clientY);
-  let over = target?.closest('img');
-
-  if(!over || touchIndex === null) return;
-
-  let overIndex = [...pagesContainer.children].indexOf(over);
-
-  if(overIndex !== touchIndex){
-    let moved = pages.splice(touchIndex,1)[0];
-    pages.splice(overIndex,0,moved);
-    touchIndex = overIndex;
-    render();
-  }
-});
-
-pagesContainer.addEventListener('touchend', () => {
-  touchIndex = null;
-  render();
-});
-
-// DESKTOP DRAG (fallback)
-pagesContainer.addEventListener('dragstart',e=>{
-  dragIndex = [...e.target.parentNode.children].indexOf(e.target);
-});
-
-pagesContainer.addEventListener('dragover',e=>{e.preventDefault();});
-
-pagesContainer.addEventListener('drop',e=>{
-  e.preventDefault();
-  let target = e.target.closest('img');
-  if(!target) return;
-  let dropIndex = [...target.parentNode.children].indexOf(target);
-
-  let moved = pages.splice(dragIndex,1)[0];
-  pages.splice(dropIndex,0,moved);
-
-  current = dropIndex;
-  render();
-  show();
-});
-
-// UPDATE render to allow drag
-function render(){
-let p=document.getElementById('pages');p.innerHTML='';
-pages.forEach((src,i)=>{
-let im=document.createElement('img');
-im.src=src;
-im.draggable=true;
-im.className='thumb'+(i===current?' active':'');
-im.onclick=()=>{current=i;show()};
-p.appendChild(im);
-});
 }
 
 // PDF
@@ -494,42 +356,26 @@ pdf.save('scan.pdf');
 }
 
 function confirmCrop(){
-pages[current] = tempCroppedImage;
-
-document.getElementById('previewBox').style.display = 'none';
-
-show();
-render();
-  }
+pages[current]=tempCroppedImage;
+document.getElementById('previewBox').style.display='none';
+show();render();
+}
 
 function cancelCrop(){
-tempCroppedImage = null;
-
-document.getElementById('previewBox').style.display = 'none';
+tempCroppedImage=null;
+document.getElementById('previewBox').style.display='none';
 }
 
 </script>
 
-<div id="previewBox" style="
-position:fixed;
-top:0;left:0;right:0;bottom:0;
-background:rgba(0,0,0,0.85);
-display:none;
-align-items:center;
-justify-content:center;
-flex-direction:column;
-z-index:9999;
-">
-
+<!-- PREVIEW -->
+<div id="previewBox" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);display:none;align-items:center;justify-content:center;flex-direction:column;z-index:9999;">
 <img id="previewImg" style="max-width:90%;max-height:70%;border-radius:10px;">
-
 <div style="margin-top:10px;display:flex;gap:10px;">
 <button onclick="confirmCrop()">Confirm</button>
 <button onclick="cancelCrop()" class="secondary">Cancel</button>
 </div>
-
 </div>
 
 </body>
   </html>
-  
