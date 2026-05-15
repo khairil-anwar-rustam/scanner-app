@@ -73,13 +73,21 @@ let r=new FileReader();
 r.onload=()=>{
 pages.push(r.result);
 current=pages.length-1;
-show();render();
+show();
+render();
 };
 r.readAsDataURL(f);
 });
 };
 
-function show(){img.src=pages[current];updateCorners();}
+// FIX 1: timing-safe render
+function show(){
+img.src=pages[current];
+setTimeout(()=>{
+updateCorners();
+drawOverlay();
+},50);
+}
 
 function render(){
 let p=document.getElementById('pages');
@@ -100,7 +108,7 @@ mode=m;
 document.getElementById('m'+m.charAt(0).toUpperCase()+m.slice(1)).classList.add('active');
 }
 
-// DRAG CORNERS
+// FIX 2: SAFE corner drag (clamped)
 corners.forEach(c=>{
 let el=document.getElementById(c.id);
 let drag=false;
@@ -114,8 +122,17 @@ window.addEventListener('touchmove',move);
 function move(e){
 if(!drag)return;
 let r=editor.getBoundingClientRect();
-c.x=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
-c.y=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+
+let x=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+let y=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+
+// clamp inside editor
+x=Math.max(0,Math.min(r.width,x));
+y=Math.max(0,Math.min(r.height,y));
+
+c.x=x;
+c.y=y;
+
 updateCorners();
 }
 });
@@ -155,7 +172,7 @@ ctx.fill();
 ctx.globalCompositeOperation="source-over";
 }
 
-// FIXED IMAGE FIT CALCULATION
+// FIXED IMAGE FIT MODEL
 function getImageRect(){
 let r = img.getBoundingClientRect();
 let iw = img.naturalWidth;
@@ -185,7 +202,8 @@ ctx.rotate(Math.PI/2);
 ctx.drawImage(image,-image.width/2,-image.height/2);
 
 pages[current]=c.toDataURL();
-show();render();
+show();
+render();
 };
 }
 
@@ -215,7 +233,41 @@ d[i]=d[i+1]=d[i+2]=v;
 ctx.putImageData(data,0,0);
 }
 
-// FIXED APPLY CROP
+// FIX 3: stable homography
+function H(sx,sy,dx,dy){
+let A=[];
+for(let i=0;i<4;i++){
+A.push([sx[i],sy[i],1,0,0,0,-dx[i]*sx[i],-dx[i]*sy[i],dx[i]]);
+A.push([0,0,0,sx[i],sy[i],1,-dy[i]*sx[i],-dy[i]*sy[i],dy[i]]);
+}
+
+let m=A.map(r=>r.slice());
+
+for(let i=0;i<8;i++){
+let max=i;
+for(let k=i+1;k<8;k++){
+if(Math.abs(m[k][i])>Math.abs(m[max][i])) max=k;
+}
+[m[i],m[max]]=[m[max],m[i]];
+
+let div=Math.abs(m[i][i])<0.000001?0.000001:m[i][i];
+for(let j=i;j<9;j++) m[i][j]/=div;
+
+for(let k=0;k<8;k++){
+if(k!==i){
+let f=m[k][i];
+for(let j=i;j<9;j++) m[k][j]-=f*m[i][j];
+}
+}
+}
+
+let h=new Array(9).fill(0);
+for(let i=0;i<8;i++) h[i]=m[i][8];
+h[8]=1;
+return h;
+}
+
+// APPLY CROP
 function applyCrop(){
 let image=new Image();
 image.src=pages[current];
@@ -229,10 +281,9 @@ let w=1200,h=1600;
 canvas.width=w;
 canvas.height=h;
 
-let rect=editor.getBoundingClientRect();
 let info=getImageRect();
 
-// CORRECT mapping
+// correct mapping
 let src=[
 {
 x:(corners[0].x-info.offsetX)/info.scale,
@@ -259,40 +310,6 @@ let dst=[
 { x:0,y:h }
 ];
 
-// homography solver
-function H(sx,sy,dx,dy){
-let A=[];
-for(let i=0;i<4;i++){
-A.push([sx[i],sy[i],1,0,0,0,-dx[i]*sx[i],-dx[i]*sy[i],dx[i]]);
-A.push([0,0,0,sx[i],sy[i],1,-dy[i]*sx[i],-dy[i]*sy[i],dy[i]]);
-}
-
-let m=A.map(r=>r.slice());
-
-for(let i=0;i<8;i++){
-let max=i;
-for(let k=i+1;k<8;k++){
-if(Math.abs(m[k][i])>Math.abs(m[max][i])) max=k;
-}
-[m[i],m[max]]=[m[max],m[i]];
-
-let div=m[i][i]||1;
-for(let j=i;j<9;j++) m[i][j]/=div;
-
-for(let k=0;k<8;k++){
-if(k!==i){
-let f=m[k][i];
-for(let j=i;j<9;j++) m[k][j]-=f*m[i][j];
-}
-}
-}
-
-let h=new Array(9).fill(0);
-for(let i=0;i<8;i++) h[i]=m[i][8];
-h[8]=1;
-return h;
-}
-
 let Hm=H(
 [src[0].x,src[1].x,src[2].x,src[3].x],
 [src[0].y,src[1].y,src[2].y,src[3].y],
@@ -307,8 +324,9 @@ let iy=(Hm[3]*x+Hm[4]*y+Hm[5])/d;
 return [ix,iy];
 }
 
-let srcCanvas=document.createElement('canvas');
-let sctx=srcCanvas.getContext('2d');
+let sctx=document.createElement('canvas').getContext('2d');
+let srcCanvas=sctx.canvas;
+
 srcCanvas.width=image.width;
 srcCanvas.height=image.height;
 sctx.drawImage(image,0,0);
@@ -358,7 +376,8 @@ pdf.save('scan.pdf');
 function confirmCrop(){
 pages[current]=tempCroppedImage;
 document.getElementById('previewBox').style.display='none';
-show();render();
+show();
+render();
 }
 
 function cancelCrop(){
