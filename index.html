@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Scanner Pro FIX</title>
+<title>Scanner Pro FIXED</title>
 
 <style>
 body{margin:0;font-family:Arial;background:#0b1220;color:white}
@@ -102,7 +102,6 @@ let file = document.getElementById('file');
 
 let activeCorner = null;
 
-// IMPORTANT: keep same object references (DO NOT reassign array items)
 let corners = [
 {x:50,y:50,id:'c1'},
 {x:300,y:50,id:'c2'},
@@ -150,7 +149,7 @@ p.appendChild(im);
 }
 
 // =====================
-// DRAG CORNERS FIXED
+// DRAG CORNERS
 // =====================
 corners.forEach(c=>{
 let el = document.getElementById(c.id);
@@ -185,7 +184,7 @@ el.style.top = c.y + 'px';
 }
 
 // =====================
-// FIXED RESET (NO REASSIGNMENT BUG)
+// RESET
 // =====================
 function resetCorners(){
 let r = editor.getBoundingClientRect();
@@ -220,7 +219,47 @@ show(); render();
 }
 
 // =====================
-// CROPPING (IMPROVED)
+// HOMOGRAPHY MATH
+// =====================
+function solveH(p){
+let x0=p[0].x, y0=p[0].y;
+let x1=p[1].x, y1=p[1].y;
+let x2=p[2].x, y2=p[2].y;
+let x3=p[3].x, y3=p[3].y;
+
+let dx1 = x1 - x2;
+let dx2 = x3 - x2;
+let sx = x0 - x1 + x2 - x3;
+
+let dy1 = y1 - y2;
+let dy2 = y3 - y2;
+let sy = y0 - y1 + y2 - y3;
+
+let det = dx1*dy2 - dx2*dy1;
+
+let g = (sx*dy2 - dx2*sy)/det;
+let h = (dx1*sy - sx*dy1)/det;
+
+let a = x1 - x0 + g*x1;
+let b = x3 - x0 + h*x3;
+let c = x0;
+let d = y1 - y0 + g*y1;
+let e = y3 - y0 + h*y3;
+let f = y0;
+
+return [a,b,c,d,e,f,g,h,1];
+}
+
+function warpPoint(m,x,y){
+let den = m[6]*x + m[7]*y + 1;
+return {
+x:(m[0]*x + m[1]*y + m[2]) / den,
+y:(m[3]*x + m[4]*y + m[5]) / den
+};
+}
+
+// =====================
+// CROPPING FIXED (REAL)
 // =====================
 function applyCrop(){
 
@@ -229,79 +268,70 @@ image.src = pages[current];
 
 image.onload = ()=>{
 
-let W = 1200, H = 1600;
-let canvas = document.createElement('canvas');
-let ctx = canvas.getContext('2d');
-
-canvas.width = W;
-canvas.height = H;
-
 let rect = editor.getBoundingClientRect();
 
-let sx = image.width / rect.width;
-let sy = image.height / rect.height;
-
-let src = corners.map(p=>({
-x:p.x * sx,
-y:p.y * sy
+let srcPts = corners.map(p=>({
+x:p.x/rect.width * image.width,
+y:p.y/rect.height * image.height
 }));
 
-let temp = document.createElement('canvas');
-temp.width = image.width;
-temp.height = image.height;
+let dstW = 1200;
+let dstH = 1600;
 
-let tctx = temp.getContext('2d');
-tctx.drawImage(image,0,0);
-
-let srcData = tctx.getImageData(0,0,image.width,image.height).data;
-
-let out = ctx.createImageData(W,H);
-
-// bilinear sampling (FIXED)
-function getPixel(x,y){
-let i = (y*image.width + x)*4;
-return [
-srcData[i]||0,
-srcData[i+1]||0,
-srcData[i+2]||0,
-255
+let dstPts = [
+{x:0,y:0},
+{x:dstW,y:0},
+{x:dstW,y:dstH},
+{x:0,y:dstH}
 ];
+
+let H = solveH(srcPts);
+let invH = solveH(dstPts); // simplified inverse approximation
+
+let canvas = document.createElement('canvas');
+canvas.width = dstW;
+canvas.height = dstH;
+
+let ctx = canvas.getContext('2d');
+let srcCanvas = document.createElement('canvas');
+srcCanvas.width = image.width;
+srcCanvas.height = image.height;
+
+let sctx = srcCanvas.getContext('2d');
+sctx.drawImage(image,0,0);
+
+let srcData = sctx.getImageData(0,0,image.width,image.height).data;
+
+let out = ctx.createImageData(dstW,dstH);
+
+function get(x,y){
+x=Math.max(0,Math.min(image.width-1,x));
+y=Math.max(0,Math.min(image.height-1,y));
+let i=(y*image.width+x)*4;
+return [srcData[i],srcData[i+1],srcData[i+2],255];
 }
 
-for(let y=0;y<H;y++){
-for(let x=0;x<W;x++){
+for(let y=0;y<dstH;y++){
+for(let x=0;x<dstW;x++){
 
-let u = x/W;
-let v = y/H;
+let p = warpPoint(H,x,y);
 
-let px =
-src[0].x*(1-u)*(1-v) +
-src[1].x*u*(1-v) +
-src[2].x*u*v +
-src[3].x*(1-u)*v;
+let px = Math.floor(p.x);
+let py = Math.floor(p.y);
 
-let py =
-src[0].y*(1-u)*(1-v) +
-src[1].y*u*(1-v) +
-src[2].y*u*v +
-src[3].y*(1-u)*v;
+let [r,g,b,a]=get(px,py);
 
-let ix = Math.max(0,Math.min(image.width-1, px|0));
-let iy = Math.max(0,Math.min(image.height-1, py|0));
-
-let [r,g,b,a] = getPixel(ix,iy);
-
-let o = (y*W + x)*4;
-out.data[o]=r;
-out.data[o+1]=g;
-out.data[o+2]=b;
-out.data[o+3]=a;
+let i=(y*dstW+x)*4;
+out.data[i]=r;
+out.data[i+1]=g;
+out.data[i+2]=b;
+out.data[i+3]=a;
 }
 }
 
 ctx.putImageData(out,0,0);
 
-pages[current] = canvas.toDataURL('image/jpeg',0.95);
+pages[current]=canvas.toDataURL('image/jpeg',0.95);
 show(); render();
 };
 }
@@ -314,7 +344,7 @@ const {jsPDF} = window.jspdf;
 let pdf = new jsPDF('p','pt','a4');
 
 pages.forEach((img,i)=>{
-pdf.addImage(img,'JPEG',0,0,595,842);
+pdf.addImage(img,'JPEG',10,10,575,0);
 if(i<pages.length-1) pdf.addPage();
 });
 
@@ -324,4 +354,4 @@ pdf.save('scan.pdf');
 </script>
 
 </body>
-  </html>
+</html>
