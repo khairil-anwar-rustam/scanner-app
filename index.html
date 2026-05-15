@@ -261,44 +261,156 @@ let a =
 let b =
 (d0.x*(s2.x-s1.x)+
  d1.x*(s0.x-s2.x)+
- d2.x*(s1.x-s0.x))/denom;
+function applyCrop(){
+let image=new Image();
+image.src=pages[current];
 
-let c =
-(d0.y*(s1.y-s2.y)+
- d1.y*(s2.y-s0.y)+
- d2.y*(s0.y-s1.y))/denom;
+image.onload=()=>{
 
-let d =
-(d0.y*(s2.x-s1.x)+
- d1.y*(s0.x-s2.x)+
- d2.y*(s1.x-s0.x))/denom;
+let canvas=document.createElement('canvas');
+let ctx=canvas.getContext('2d');
 
-let e =
-(d0.x*(s1.x*s2.y-s2.x*s1.y)+
- d1.x*(s2.x*s0.y-s0.x*s2.y)+
- d2.x*(s0.x*s1.y-s1.x*s0.y))/denom;
+let w=1200,h=1600;
+canvas.width=w;
+canvas.height=h;
 
-let f =
-(d0.y*(s1.x*s2.y-s2.x*s1.y)+
- d1.y*(s2.x*s0.y-s0.x*s2.y)+
- d2.y*(s0.x*s1.y-s1.x*s0.y))/denom;
+let rect=editor.getBoundingClientRect();
 
-ctx.setTransform(a,c,b,d,e,f);
-ctx.drawImage(image,0,0);
+// --- convert corners to image space ---
+let src=[
+{
+x: corners[0].x * image.width / rect.width,
+y: corners[0].y * image.height / rect.height
+},
+{
+x: corners[1].x * image.width / rect.width,
+y: corners[1].y * image.height / rect.height
+},
+{
+x: corners[2].x * image.width / rect.width,
+y: corners[2].y * image.height / rect.height
+},
+{
+x: corners[3].x * image.width / rect.width,
+y: corners[3].y * image.height / rect.height
+}
+];
 
-ctx.restore();
+// destination (flat document)
+let dst=[
+{ x: 0, y: 0 },
+{ x: w, y: 0 },
+{ x: w, y: h },
+{ x: 0, y: h }
+];
+
+// -------- HOMOGRAPHY SOLVER --------
+function solveH(sx,sy,dx,dy){
+let A=[];
+
+for(let i=0;i<4;i++){
+A.push([
+sx[i], sy[i], 1, 0, 0, 0,
+-dx[i]*sx[i],
+-dx[i]*sy[i],
+dx[i]
+]);
+
+A.push([
+0, 0, 0, sx[i], sy[i], 1,
+-dy[i]*sx[i],
+-dy[i]*sy[i],
+dy[i]
+]);
 }
 
-// split quad into 2 triangles
-warp(src[0],src[1],src[2],dst[0],dst[1],dst[2]);
-warp(src[0],src[2],src[3],dst[0],dst[2],dst[3]);
+let m=A.map(r=>r.slice());
 
+for(let i=0;i<8;i++){
+let max=i;
+for(let k=i+1;k<8;k++){
+if(Math.abs(m[k][i])>Math.abs(m[max][i])) max=k;
+}
+[m[i],m[max]]=[m[max],m[i]];
+
+let div=m[i][i]||1;
+for(let j=i;j<9;j++) m[i][j]/=div;
+
+for(let k=0;k<8;k++){
+if(k!==i){
+let f=m[k][i];
+for(let j=i;j<9;j++){
+m[k][j]-=f*m[i][j];
+}
+}
+}
+}
+
+let h=new Array(9).fill(0);
+for(let i=0;i<8;i++) h[i]=m[i][8];
+h[8]=1;
+
+return h;
+}
+
+let H = solveH(
+[src[0].x,src[1].x,src[2].x,src[3].x],
+[src[0].y,src[1].y,src[2].y,src[3].y],
+[dst[0].x,dst[1].x,dst[2].x,dst[3].x],
+[dst[0].y,dst[1].y,dst[2].y,dst[3].y]
+);
+
+// inverse mapping
+function map(x,y){
+let d = H[6]*x + H[7]*y + 1;
+let ix = (H[0]*x + H[1]*y + H[2]) / d;
+let iy = (H[3]*x + H[4]*y + H[5]) / d;
+return [ix,iy];
+}
+
+// source canvas
+let srcCanvas=document.createElement('canvas');
+let sctx=srcCanvas.getContext('2d');
+
+srcCanvas.width=image.width;
+srcCanvas.height=image.height;
+
+sctx.drawImage(image,0,0);
+
+let srcData=sctx.getImageData(0,0,srcCanvas.width,srcCanvas.height);
+let out=sctx.createImageData(w,h);
+
+// -------- REAL FLATTENING RENDER --------
+for(let y=0;y<h;y++){
+for(let x=0;x<w;x++){
+
+let [sxp,syp]=map(x,y);
+
+sxp=Math.max(0,Math.min(image.width-1,sxp));
+syp=Math.max(0,Math.min(image.height-1,syp));
+
+let i=(Math.floor(syp)*image.width+Math.floor(sxp))*4;
+let o=(y*w+x)*4;
+
+out.data[o]=srcData.data[i];
+out.data[o+1]=srcData.data[i+1];
+out.data[o+2]=srcData.data[i+2];
+out.data[o+3]=255;
+}
+}
+
+ctx.putImageData(out,0,0);
+
+// apply filters
 applyMode(canvas);
 
+// SAVE RESULT
 tempCroppedImage = canvas.toDataURL('image/jpeg',1);
 
+// SHOW PREVIEW (your existing UI)
 document.getElementById('previewImg').src = tempCroppedImage;
 document.getElementById('previewBox').style.display = 'flex';
+
 };
 }
 
