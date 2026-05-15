@@ -2,243 +2,259 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Receipt Report Generator</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Scanner Pro</title>
+
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-
 <style>
+  *{
+  box-sizing:border-box;
+  -webkit-tap-highlight-color:transparent;
+}
+
 body{
   margin:0;
-  font-family:Arial, sans-serif;
+  font-family:Arial;
   background:#0f172a;
-  color:#fff;
+  color:white;
+}
+
+header{
+  padding:16px;
+  text-align:center;
+  font-size:22px;
+  font-weight:bold;
+  background:#111827;
+  position:sticky;
+  top:0;
 }
 
 .container{
-  padding:16px;
   max-width:900px;
   margin:auto;
+  padding:15px;
 }
 
-h1{
-  font-size:22px;
-  margin-bottom:10px;
+.card{
+  background:#1e293b;
+  padding:14px;
+  border-radius:16px;
+  margin-bottom:15px;
 }
 
-input{
+input,select,button{
   width:100%;
-  padding:10px;
-  margin:6px 0;
-  border-radius:8px;
+  padding:12px;
+  margin-top:10px;
   border:none;
+  border-radius:10px;
+  font-size:16px;
+}
+
+input,select{
+  background:#0f172a;
+  color:white;
 }
 
 button{
-  width:100%;
-  padding:12px;
-  border:none;
-  border-radius:10px;
   background:#22c55e;
-  color:#000;
   font-weight:bold;
-  margin-top:10px;
+  color:black;
+}
+
+button:active{
+  transform:scale(0.98);
+}
+
+.danger{
+  background:#ef4444;
+  color:white;
+}
+
+#editor{
+  margin-top:15px;
+  background:black;
+  height:55vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  overflow:hidden;
+  border-radius:12px;
+}
+
+#previewImage{
+  width:100%;
+  height:100%;
+  object-fit:contain;
 }
 
 .receipt-list{
   margin-top:15px;
 }
 
-.card{
-  background:#1e293b;
-  padding:12px;
-  border-radius:10px;
-  margin-bottom:12px;
+.item{
+  background:#111827;
+  padding:10px;
+  border-radius:12px;
+  margin-bottom:10px;
 }
 
-.card-header{
-  display:flex;
-  justify-content:space-between;
-  align-items:flex-start;
-  gap:10px;
-}
-
-.card-info{
-  font-size:14px;
-}
-
-.card img{
+.item img{
   width:100%;
-  border-radius:8px;
-  margin-top:10px;
+  border-radius:10px;
 }
 
-.delete-btn{
-  background:#ef4444;
-  color:#fff;
-  border:none;
-  border-radius:6px;
-  padding:4px 8px;
-  font-size:12px;
+.total{
+  text-align:right;
+  font-size:18px;
+  font-weight:bold;
+  margin:10px 0;
 }
+
+.row{
+  display:flex;
+  gap:10px;
+  }
 </style>
+  
 </head>
 
 <body>
+
+<header>Scanner Pro</header>
+
 <div class="container">
-  <h1>Receipt Report</h1>
 
-  <input type="date" id="date">
-  <input type="text" id="purpose" placeholder="Purpose">
-  <input type="number" id="amount" placeholder="Amount (RM)">
-  <input type="file" id="receipt" accept="image/*">
+<div class="card">
 
-  <div class="receipt-list" id="list"></div>
+<input type="date" id="date">
+<input type="text" id="purpose" placeholder="Document Name">
 
-  <button onclick="generatePDF()">Generate PDF</button>
+<select id="filterMode">
+  <option value="original">Original</option>
+  <option value="bw">Black & White</option>
+  <option value="gray">Grayscale</option>
+  <option value="enhance">Enhanced</option>
+</select>
+
+<input type="file" id="fileInput" accept="image/*" capture="environment">
+
+<div id="editor">
+  <img id="previewImage">
 </div>
 
+<div class="row">
+<button onclick="saveScan()">Save Scan</button>
+<button class="danger" onclick="resetEditor()">Reset</button>
+</div>
+
+</div>
+
+<div class="total" id="totalAmount">Scans: 0</div>
+
+<div class="receipt-list" id="receiptList"></div>
+
+<button onclick="generatePDF()">Export PDF</button>
+
+</div>
+
+<canvas id="canvas"></canvas>
+
 <script>
-const { jsPDF } = window.jspdf;
-let receipts = [];
+  const { jsPDF } = window.jspdf;
 
-// compress image
-function compressImage(file){
-  return new Promise(resolve => {
-    const img = new Image();
-    const reader = new FileReader();
+const fileInput = document.getElementById("fileInput");
+const previewImage = document.getElementById("previewImage");
 
-    reader.onload = e => img.src = e.target.result;
+let scans = [];
+let currentImage = null;
 
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
+fileInput.addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
 
-      const maxWidth = 800;
-      const scale = maxWidth / img.width;
+  const reader = new FileReader();
 
-      canvas.width = maxWidth;
-      canvas.height = img.height * scale;
+  reader.onload = (ev) => {
+    currentImage = ev.target.result;
+    previewImage.src = currentImage;
+  };
 
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  reader.readAsDataURL(file);
+});
 
-      resolve(canvas.toDataURL('image/jpeg', 0.8));
-    };
+function saveScan() {
+  const name = document.getElementById("purpose").value;
 
-    reader.readAsDataURL(file);
-  });
-}
-
-// auto add receipt
-document.getElementById('receipt').addEventListener('change', async function(){
-  const file = this.files[0];
-  if(!file) return;
-
-  const date = document.getElementById('date').value;
-  const purpose = document.getElementById('purpose').value;
-  const amount = document.getElementById('amount').value;
-
-  if(!date || !purpose){
-    alert('Please fill Date and Purpose first');
-    this.value = '';
+  if (!currentImage) {
+    alert("Select image first");
     return;
   }
 
-  const imgData = await compressImage(file);
+  if (!name) {
+    alert("Enter document name");
+    return;
+  }
 
-  receipts.push({ date, purpose, amount, imgData });
+  scans.push({
+    name,
+    image: currentImage
+  });
 
-  this.value = '';
-  document.getElementById('amount').value = '';
-
-  renderList();
-});
-
-// delete receipt
-function deleteReceipt(index){
-  receipts.splice(index,1);
-  renderList();
+  render();
 }
 
-// render list
-function renderList(){
-  const list = document.getElementById('list');
-  list.innerHTML = '';
+function render() {
+  const list = document.getElementById("receiptList");
+  list.innerHTML = "";
 
-  receipts.forEach((r, index) => {
-    const div = document.createElement('div');
-    div.className = 'card';
+  scans.forEach((s, i) => {
+    const div = document.createElement("div");
+    div.className = "item";
 
     div.innerHTML = `
-      <div class="card-header">
-        <div class="card-info">
-          <div><b>Date:</b> ${r.date}</div>
-          <div><b>Purpose:</b> ${r.purpose}</div>
-          <div><b>Amount:</b> RM ${r.amount || '-'}</div>
-        </div>
-        <button class="delete-btn" onclick="deleteReceipt(${index})">Delete</button>
-      </div>
-      <img src="${r.imgData}">
+      <b>${s.name}</b>
+      <img src="${s.image}">
+      <button class="danger" onclick="deleteScan(${i})">Delete</button>
     `;
 
     list.appendChild(div);
   });
+
+  document.getElementById("totalAmount").innerText =
+    "Scans: " + scans.length;
 }
 
-// generate PDF
-async function generatePDF(){
-  const doc = new jsPDF('p','mm','a4');
+function deleteScan(i) {
+  scans.splice(i, 1);
+  render();
+}
 
-  for(let i = 0; i < receipts.length; i++){
-    const r = receipts[i];
+function resetEditor() {
+  fileInput.value = "";
+  previewImage.src = "";
+  currentImage = null;
+}
 
-    if(i !== 0){
-      doc.addPage();
-    }
-
-    let y = 15;
-
-    doc.setFontSize(16);
-    doc.text('Receipt Report', 10, y);
-
-    y += 10;
-
-    doc.setFontSize(11);
-
-    doc.text(`Date: ${r.date}`, 10, y);
-    y += 6;
-
-    doc.text(`Purpose: ${r.purpose}`, 10, y);
-    y += 6;
-
-    doc.text(`Amount: RM ${r.amount || '-'}`, 10, y);
-    y += 8;
-
-    // 🔥 FIX: get REAL image size
-    const img = new Image();
-    img.src = r.imgData;
-
-    await new Promise(resolve => {
-      img.onload = resolve;
-    });
-
-    const pageWidth = 190; // A4 width minus margin
-    const pageHeight = 260; // safe height
-
-    let imgWidth = pageWidth;
-    let imgHeight = (img.height / img.width) * imgWidth;
-
-    // If too tall, scale down
-    if(imgHeight > pageHeight){
-      imgHeight = pageHeight;
-      imgWidth = (img.width / img.height) * imgHeight;
-    }
-
-    doc.addImage(r.imgData, 'JPEG', 10, y, imgWidth, imgHeight);
+async function generatePDF() {
+  if (scans.length === 0) {
+    alert("No scans");
+    return;
   }
 
-  doc.save('receipt-report.pdf');
+  const doc = new jsPDF();
+
+  for (let i = 0; i < scans.length; i++) {
+    if (i !== 0) doc.addPage();
+
+    doc.text(scans[i].name, 10, 10);
+    doc.addImage(scans[i].image, "JPEG", 10, 20, 180, 160);
+  }
+
+  doc.save("scans.pdf");
   }
 </script>
+
 </body>
-    </html>
+  </html>
